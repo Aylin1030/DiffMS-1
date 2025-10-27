@@ -1,0 +1,8 @@
+# Modal Cloud 依赖
+modal>=0.63.0
+
+# 本地开发时可能需要的依赖（在Modal image中会自动安装）
+# torch==2.0.1
+# pytorch-lightning==2.0.0
+# rdkit==2023.3.2
+
