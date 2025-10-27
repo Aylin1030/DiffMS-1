@@ -1,0 +1,26 @@
+name: custom_data
+remove_h: null
+stats_dir: '/Users/aylin/Downloads/msg'  # 使用MSG的统计信息（atom_types, edge_types等）
+datadir: '../../../madgen_yaolab/msdata/processed_data'  # 自定义数据路径
+filter: False
+denoise_nodes: False
+merge: 'downproject_4096'  # 'none' | 'mist_fp' | 'merge-encoder_output-linear' |  'merge-encoder_output-mlp' | 'downproject_4096'
+morgan_nbits: 2048
+morgan_r: 2
+split_file: '../../../madgen_yaolab/msdata/processed_data/split.tsv'
+spec_features: 'peakformula'
+mol_features: 'fingerprint'
+subform_folder: '../../../madgen_yaolab/msdata/processed_data/subformulae/default_subformulae'
+augment_data: False
+remove_prob: 0.1
+remove_weights: 'exp'
+inten_prob: 0.1
+inten_transform: 'float'
+cls_type: 'ms1'
+magma_aux_loss: False
+labels_file: '../../../madgen_yaolab/msdata/processed_data/labels.tsv'
+spec_folder: '../../../madgen_yaolab/msdata/processed_data/spec_files'
+cache_featurizers: True
+set_pooling: 'cls'
+max_count: null
+
