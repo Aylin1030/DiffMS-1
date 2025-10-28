@@ -1,0 +1,11 @@
+dataset	spec	ionization	formula	smiles	inchikey	instrument
+CustomData	SPEC_4922	[M+H]+	C30H48O3			Unknown
+CustomData	SPEC_6652	[M+H]+	C33H52O5			Unknown
+CustomData	SPEC_4838	[M+H]+	C36H58O8			Unknown
+CustomData	SPEC_5680	[M+H]+	C31H48O3			Unknown
+CustomData	SPEC_6152	[M+H]+	C31H48O3			Unknown
+CustomData	SPEC_9714	[M+H]+	C33H50O4			Unknown
+CustomData	SPEC_5963	[M+H]+	C32H48O5			Unknown
+CustomData	SPEC_7905	[M+H]+	C32H48O4			Unknown
+CustomData	SPEC_10020	[M+H]+	C37H56O7			Unknown
+CustomData	SPEC_6220	[M+H]+	C31H50O4			Unknown

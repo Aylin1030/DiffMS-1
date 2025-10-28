@@ -219,11 +219,17 @@ def run_inference(max_count: int = None, data_subdir: str = "processed_data"):
         cfg.dataset.max_count = max_count
         logger.info(f"  ⚠ 限制测试数据量: {max_count}")
     
-    cfg.general.test_only = str(checkpoint_path)
+    # 修正1: test_only应为布尔值，权重路径单独设置
+    cfg.general.test_only = True
     cfg.general.name = 'modal_inference'
     cfg.general.gpus = 1 if torch.cuda.is_available() else 0
     cfg.general.test_samples_to_generate = 10  # 减少采样数量（测试用10，生产可改为100）
     cfg.general.wandb = 'disabled'
+    
+    # 修正2: decoder和encoder权重路径（虽然checkpoint包含全部权重，但保持一致性）
+    # 注意：checkpoint中已包含encoder和decoder权重，这里设为None避免重复加载
+    cfg.general.decoder = None  # checkpoint中已包含
+    cfg.general.encoder = None  # checkpoint中已包含
     
     # 使用MSG Large Model配置（与checkpoint匹配）
     cfg.model.encoder_hidden_dim = 512       # Large Model (MSG)
@@ -324,18 +330,43 @@ def run_inference(max_count: int = None, data_subdir: str = "processed_data"):
         )
         logger.info("  ✓ 模型创建成功")
         
-        # 加载权重
+        # 修正3: 加载并验证checkpoint
+        logger.info(f"  加载checkpoint: {checkpoint_path}")
         checkpoint = torch.load(str(checkpoint_path), map_location='cpu')
+        
+        # 验证checkpoint结构
+        logger.info(f"  Checkpoint keys: {list(checkpoint.keys())}")
+        
         if 'state_dict' in checkpoint:
-            model.load_state_dict(checkpoint['state_dict'])
-            logger.info("  ✓ 从checkpoint['state_dict']加载权重")
+            state_dict = checkpoint['state_dict']
+            logger.info(f"  state_dict包含 {len(state_dict)} 个参数")
+            
+            # 验证关键组件
+            encoder_keys = [k for k in state_dict.keys() if k.startswith('encoder.')]
+            decoder_keys = [k for k in state_dict.keys() if k.startswith('decoder.')]
+            logger.info(f"  ✓ Encoder权重: {len(encoder_keys)} 个")
+            logger.info(f"  ✓ Decoder权重: {len(decoder_keys)} 个")
+            
+            # 验证维度匹配
+            if 'decoder.mlp_in_X.0.weight' in state_dict:
+                x_in_dim = state_dict['decoder.mlp_in_X.0.weight'].shape[1]
+                logger.info(f"  ✓ X输入维度: {x_in_dim} (期望: 16)")
+            if 'decoder.mlp_in_y.0.weight' in state_dict:
+                y_in_dim = state_dict['decoder.mlp_in_y.0.weight'].shape[1]
+                logger.info(f"  ✓ y输入维度: {y_in_dim} (期望: 2061)")
+            
+            # 加载权重
+            model.load_state_dict(state_dict, strict=True)
+            logger.info("  ✓ 从checkpoint['state_dict']加载权重 (strict=True)")
         else:
-            model.load_state_dict(checkpoint)
-            logger.info("  ✓ 直接加载checkpoint作为权重")
+            model.load_state_dict(checkpoint, strict=True)
+            logger.info("  ✓ 直接加载checkpoint作为权重 (strict=True)")
         
         logger.info("✓ 模型和权重加载成功")
     except Exception as e:
         logger.error(f"✗ 模型加载失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise
     
     # 9. 创建Trainer
@@ -372,17 +403,215 @@ def run_inference(max_count: int = None, data_subdir: str = "processed_data"):
     # 将pkl文件复制到outputs volume
     logger.info("复制预测结果到outputs volume...")
     import shutil
-    for pkl_file in preds_pkl_dir.glob("*.pkl"):
+    pkl_files = list(preds_pkl_dir.glob("*.pkl"))
+    for pkl_file in pkl_files:
         dest = preds_dir / pkl_file.name
         shutil.copy2(pkl_file, dest)
         logger.info(f"  ✓ 复制: {pkl_file.name}")
     
-    logger.info(f"结果保存在: {output_path}")
-    logger.info(f"  - 预测结果: {preds_dir}")
+    # ===================================================================
+    # 步骤 11: 后处理 - 转换为SMILES和生成可视化
+    # ===================================================================
+    logger.info("=" * 80)
+    logger.info("步骤 11: 后处理 - 转换和可视化")
+    logger.info("=" * 80)
+    
+    # 11.1 转换pkl文件为SMILES (TSV格式)
+    logger.info("11.1 转换为SMILES...")
+    smiles_output_dir = output_path / "smiles"
+    smiles_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        from rdkit import Chem
+        import pandas as pd
+        
+        def mol_to_canonical_smiles(mol):
+            """转换为canonical SMILES（无立体化学）"""
+            if mol is None:
+                return None
+            try:
+                Chem.RemoveStereochemistry(mol)
+                smiles = Chem.MolToSmiles(mol, canonical=True)
+                test_mol = Chem.MolFromSmiles(smiles)
+                if test_mol is None:
+                    return None
+                return smiles
+            except Exception:
+                return None
+        
+        # 合并所有pkl文件
+        all_predictions = []
+        for pkl_file in sorted(pkl_files):
+            logger.info(f"  处理: {pkl_file.name}")
+            with open(pkl_file, 'rb') as f:
+                import pickle
+                predictions = pickle.load(f)
+                if isinstance(predictions, list):
+                    all_predictions.extend(predictions)
+        
+        logger.info(f"  总共 {len(all_predictions)} 个谱图")
+        
+        # 转换为SMILES
+        top1_data = []
+        all_candidates_data = []
+        valid_count = 0
+        total_count = 0
+        
+        for spec_idx, mol_list in enumerate(all_predictions):
+            spec_id = f"spec_{spec_idx:04d}"
+            
+            if not isinstance(mol_list, list):
+                mol_list = [mol_list]
+            
+            valid_smiles = []
+            
+            for rank, mol in enumerate(mol_list, start=1):
+                total_count += 1
+                smiles = mol_to_canonical_smiles(mol)
+                
+                if smiles is not None:
+                    valid_count += 1
+                    valid_smiles.append(smiles)
+                    all_candidates_data.append({
+                        'spec_id': spec_id,
+                        'rank': rank,
+                        'smiles': smiles
+                    })
+            
+            # Top-1
+            if valid_smiles:
+                top1_data.append({'spec_id': spec_id, 'smiles': valid_smiles[0]})
+            else:
+                top1_data.append({'spec_id': spec_id, 'smiles': ''})
+        
+        # 保存TSV文件
+        top1_df = pd.DataFrame(top1_data)
+        top1_file = smiles_output_dir / 'predictions_top1.tsv'
+        top1_df.to_csv(top1_file, sep='\t', index=False)
+        logger.info(f"  ✓ Top-1预测: {top1_file.name} ({len(top1_df)} 行)")
+        
+        all_candidates_df = pd.DataFrame(all_candidates_data)
+        all_candidates_file = smiles_output_dir / 'predictions_all_candidates.tsv'
+        all_candidates_df.to_csv(all_candidates_file, sep='\t', index=False)
+        logger.info(f"  ✓ 所有候选: {all_candidates_file.name} ({len(all_candidates_df)} 行)")
+        
+        logger.info(f"  统计: {valid_count}/{total_count} 有效SMILES ({valid_count/total_count*100:.1f}%)")
+        
+    except Exception as e:
+        logger.error(f"  ✗ SMILES转换失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+    
+    # 11.2 生成可视化图片
+    logger.info("\n11.2 生成可视化图片...")
+    viz_output_dir = output_path / "visualizations"
+    viz_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        from rdkit.Chem import Draw
+        
+        # 生成摘要表格
+        logger.info("  创建摘要表格...")
+        summary_rows = []
+        for spec_idx, mol_list in enumerate(all_predictions):
+            spec_id = f"spec_{spec_idx:04d}"
+            if not isinstance(mol_list, list):
+                mol_list = [mol_list]
+            
+            for rank, mol in enumerate(mol_list, start=1):
+                smiles = mol_to_canonical_smiles(mol)
+                summary_rows.append({
+                    'spec_id': spec_id,
+                    'rank': rank,
+                    'valid': smiles is not None,
+                    'smiles': smiles if smiles else ''
+                })
+        
+        summary_df = pd.DataFrame(summary_rows)
+        summary_file = viz_output_dir / 'predictions_summary.tsv'
+        summary_df.to_csv(summary_file, sep='\t', index=False)
+        logger.info(f"  ✓ 摘要表格: {summary_file.name}")
+        
+        # 生成Top-1对比图
+        logger.info("  生成Top-1对比图...")
+        valid_top1_mols = []
+        valid_top1_legends = []
+        
+        for spec_idx, mol_list in enumerate(all_predictions[:20]):  # 最多20个
+            if not isinstance(mol_list, list):
+                mol_list = [mol_list]
+            
+            if len(mol_list) > 0 and mol_list[0] is not None:
+                smiles = mol_to_canonical_smiles(mol_list[0])
+                if smiles:
+                    valid_top1_mols.append(mol_list[0])
+                    valid_top1_legends.append(f"Spec {spec_idx}")
+        
+        if valid_top1_mols:
+            top1_img = Draw.MolsToGridImage(
+                valid_top1_mols,
+                molsPerRow=5,
+                subImgSize=(250, 250),
+                legends=valid_top1_legends,
+                returnPNG=False
+            )
+            top1_file = viz_output_dir / 'top1_comparison.png'
+            top1_img.save(top1_file)
+            logger.info(f"  ✓ Top-1对比图: {top1_file.name} ({len(valid_top1_mols)} 个分子)")
+        else:
+            logger.warning("  ⚠ 没有有效的Top-1分子用于可视化")
+        
+        # 生成每个谱图的网格图
+        logger.info("  生成谱图网格图...")
+        grid_dir = viz_output_dir / 'spectrum_grids'
+        grid_dir.mkdir(parents=True, exist_ok=True)
+        
+        grid_count = 0
+        for spec_idx, mol_list in enumerate(all_predictions):
+            if not isinstance(mol_list, list):
+                mol_list = [mol_list]
+            
+            valid_mols = []
+            valid_legends = []
+            
+            for rank, mol in enumerate(mol_list[:10], start=1):  # 最多10个
+                smiles = mol_to_canonical_smiles(mol)
+                if smiles and mol is not None:
+                    valid_mols.append(mol)
+                    valid_legends.append(f"Rank {rank}\n{smiles[:30]}...")
+            
+            if valid_mols:
+                grid_img = Draw.MolsToGridImage(
+                    valid_mols,
+                    molsPerRow=5,
+                    subImgSize=(300, 300),
+                    legends=valid_legends,
+                    returnPNG=False
+                )
+                grid_file = grid_dir / f'spectrum_{spec_idx:04d}_grid.png'
+                grid_img.save(grid_file)
+                grid_count += 1
+        
+        logger.info(f"  ✓ 网格图: {grid_count} 个文件")
+        
+    except Exception as e:
+        logger.error(f"  ✗ 可视化生成失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+    
+    logger.info("=" * 80)
+    logger.info("✓ 后处理完成！")
+    logger.info("=" * 80)
+    
+    # 输出文件总结
+    logger.info(f"\n结果保存在: {output_path}")
+    logger.info(f"  - PKL文件: {preds_dir}")
+    logger.info(f"  - SMILES文件: {smiles_output_dir}")
+    logger.info(f"  - 可视化: {viz_output_dir}")
     logger.info(f"  - 日志文件: {logs_dir}")
     
     # 确保volume更新被保存
-    logger.info("保存volume更新...")
+    logger.info("\n保存volume更新...")
     output_volume.commit()
     logger.info("✓ Volume更新已保存")
     
@@ -392,7 +621,12 @@ def run_inference(max_count: int = None, data_subdir: str = "processed_data"):
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
         "output_path": str(output_path),
         "predictions_dir": str(preds_dir),
-        "logs_dir": str(logs_dir)
+        "smiles_dir": str(smiles_output_dir),
+        "visualizations_dir": str(viz_output_dir),
+        "logs_dir": str(logs_dir),
+        "total_spectra": len(all_predictions),
+        "valid_smiles": valid_count,
+        "total_candidates": total_count
     }
 
 

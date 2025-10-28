@@ -687,7 +687,25 @@ class Spec2MolDenoisingDiffusion(pl.LightningModule):
 
         mols = []
         for nodes, adj_mat in zip(X, E):
-            mols.append(self.visualization_tools.mol_from_graphs(nodes, adj_mat))
+            mol = self.visualization_tools.mol_from_graphs(nodes, adj_mat)
+            
+            # 关键修复：应用价态修正（与论文一致）
+            if mol is not None:
+                from rdkit import Chem
+                from analysis.rdkit_functions import correct_mol
+                try:
+                    # 转换为RWMol（可编辑）
+                    editable_mol = Chem.RWMol(mol)
+                    corrected_mol, no_correct = correct_mol(editable_mol)
+                    if corrected_mol is not None:
+                        mol = corrected_mol
+                    # 如果correct_mol返回None，保留原分子
+                except Exception as e:
+                    # 修正失败，保留原分子
+                    import logging
+                    logging.debug(f"Molecule correction failed: {e}")
+            
+            mols.append(mol)
 
         return mols
 

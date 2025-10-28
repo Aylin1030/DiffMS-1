@@ -1,0 +1,101 @@
+spec_id	rank	valid	smiles
+spec_0000	1	False	
+spec_0000	2	False	
+spec_0000	3	False	
+spec_0000	4	False	
+spec_0000	5	False	
+spec_0000	6	False	
+spec_0000	7	False	
+spec_0000	8	False	
+spec_0000	9	False	
+spec_0000	10	False	
+spec_0001	1	False	
+spec_0001	2	True	Cc1cC23CCC4CC(=C1)C1CCC5(C)CC2C(Cc(C)c5C(C)COC1(C)O)C(O3)C4(C)C
+spec_0001	3	False	
+spec_0001	4	False	
+spec_0001	5	False	
+spec_0001	6	False	
+spec_0001	7	False	
+spec_0001	8	False	
+spec_0001	9	True	CC1CCOC12C=CCC=CCCC=CC=C(C1CCc3c4CCC(C(=O)O)C41C=CCC3)C2
+spec_0001	10	False	
+spec_0002	1	True	CC1=C2CC3C(C)C(C)(C)C(C2C)C(C)(CC1)CC3(C)CCC(C)C.OC1COCC(O)C1
+spec_0002	2	True	CCC1(C)C2=CCCC(C)C3OC45C6C7C(C)(C1C)C(CC264)C7(CC51C2CC21C)C(O)C3O
+spec_0002	3	True	CC(C)CCC1(C)CC2C3=CCC(C)(C4C1C1CCC14C(=O)O)C1CCC(O)C1(C)C1CC321
+spec_0002	4	True	CCC1(C(=O)O)C(O)CC2C(C3(C)CCC4C(C)(CCC(C)C)C4(C)CC3)C3=CCC1C32C
+spec_0002	5	True	CC(C)C(O)C1OC2OC1C13CC1C21CCC2CC4C5C6C=C6C5(C)C3CCC43CC3C2C1
+spec_0002	6	True	CC(C)CC1C2C3C4(C)CCC5(C)COC(CO)C6OC16C2C4=CCC5C1CCC3(C)C1C
+spec_0002	7	True	C.CC1(C)CCCC2(C)CC3C1=CC1C4C2C2(COC(O)C5OC5(C)C)CCCC14CC32C
+spec_0002	8	True	CCC12CC3C(OC)(CC1C)C3(C)C(C(C)C)CC=C2C(C)(CCC(C)C)C1COCC1O
+spec_0002	9	True	CC1C=C2C3=CC4(CC4O)C4CC(C)CCC5(C(=O)O)CCC(CCC1)(C24)C5C1CCC31C
+spec_0002	10	True	CCC12C34CC35OC(C(=O)O)C3C67CC8C(C)C9C%10(C)CC(C)C4C6C8(C%10)CC91C1(C7)C5C312
+spec_0003	1	False	
+spec_0003	2	False	
+spec_0003	3	False	
+spec_0003	4	False	
+spec_0003	5	False	
+spec_0003	6	True	CCCCCCCCCCCCC1CCC1C.CCCc1c2cc(C3(O)OCC(C)O3)c(=O)cc2C1
+spec_0003	7	False	
+spec_0003	8	False	
+spec_0003	9	True	CCC.CCC=Cc1c(C)C2C(C)C3CC(C(=O)O)C2C(C)C1(c12cc4c(CCCC)=c1c-2c4O)O3
+spec_0003	10	False	
+spec_0004	1	False	
+spec_0004	2	False	
+spec_0004	3	True	CC(C1ccCCCCC=CC1)C1CC=CC=C=CCCCC12CCCC(OCCO)C(O)C2
+spec_0004	4	True	COC1CCCC=CCCCCCc2c3C(O)CCCC(Cc(C)cCCCCCCC2)C3O1
+spec_0004	5	False	
+spec_0004	6	False	
+spec_0004	7	False	
+spec_0004	8	False	
+spec_0004	9	False	
+spec_0004	10	False	
+spec_0005	1	False	
+spec_0005	2	True	CC1CCCCCCCCCCCC2OC(=O)CC(C)C3OC4CCc(cCC=C12)-ccCC3O4
+spec_0005	3	False	
+spec_0005	4	False	
+spec_0005	5	False	
+spec_0005	6	False	
+spec_0005	7	False	
+spec_0005	8	False	
+spec_0005	9	False	
+spec_0005	10	True	CCCCCCc12c34CC(O1)C1CCCCCC5Ccc-c6c(CCC(OC1)(OC53)O2)CCC64C
+spec_0006	1	False	
+spec_0006	2	False	
+spec_0006	3	False	
+spec_0006	4	False	
+spec_0006	5	False	
+spec_0006	6	False	
+spec_0006	7	False	
+spec_0006	8	False	
+spec_0006	9	False	
+spec_0006	10	False	
+spec_0007	1	False	
+spec_0007	2	False	
+spec_0007	3	False	
+spec_0007	4	False	
+spec_0007	5	True	CCCCC1(C)C2CC3=C4CC5Oc(cC4=O)C4OC(=O)CC6=CCC7(C)C6C(C=CC3)(C7(CC)O5)C421
+spec_0007	6	False	
+spec_0007	7	False	
+spec_0007	8	False	
+spec_0007	9	True	CCCCCC1CC=C2Cc3cc4c5ccc5c3CCCC(C(C)CC1C(C)(O)CO4)C2(O)C(O)CO
+spec_0007	10	False	
+spec_0008	1	False	
+spec_0008	2	False	
+spec_0008	3	False	
+spec_0008	4	False	
+spec_0008	5	False	
+spec_0008	6	False	
+spec_0008	7	False	
+spec_0008	8	True	CC1=CCC(C(=O)OC2Cc3cccc(c3)OC2O)CC(OC2(O)C(Cc3ccccc3)CC(C)CC2(C)C)C(O)C(C)C1
+spec_0008	9	False	
+spec_0008	10	False	
+spec_0009	1	False	
+spec_0009	2	False	
+spec_0009	3	False	
+spec_0009	4	False	
+spec_0009	5	False	
+spec_0009	6	False	
+spec_0009	7	False	
+spec_0009	8	False	
+spec_0009	9	False	
+spec_0009	10	False	

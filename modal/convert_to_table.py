@@ -36,6 +36,8 @@ def extract_predictions(pkl_file, output_dir="results"):
                 'spectrum_id': spectrum_idx,
                 'rank': 0,
                 'smiles': '',
+                'inchi': '',
+                'inchikey': '',
                 'num_atoms': 0,
                 'valid': False,
                 'total_candidates': 0
@@ -50,13 +52,25 @@ def extract_predictions(pkl_file, output_dir="results"):
             
             try:
                 smiles = Chem.MolToSmiles(mol)
+                inchi = Chem.MolToInchi(mol)  # 论文使用InChI
+                inchikey = Chem.MolToInchiKey(mol)  # InChI的hash版本
                 num_atoms = mol.GetNumAtoms()
+                
+                # 检查化学有效性（与论文一致）
+                try:
+                    Chem.SanitizeMol(mol)
+                    is_valid = True
+                except:
+                    is_valid = False
+                
                 valid_candidates.append({
                     'spectrum_id': spectrum_idx,
                     'rank': rank,
                     'smiles': smiles,
+                    'inchi': inchi,  # 添加InChI（论文标准）
+                    'inchikey': inchikey,  # 添加InChIKey
                     'num_atoms': num_atoms,
-                    'valid': True,
+                    'valid': is_valid,  # 更严格的validity检查
                     'total_candidates': len(candidates)
                 })
             except Exception as e:
@@ -71,6 +85,8 @@ def extract_predictions(pkl_file, output_dir="results"):
                 'spectrum_id': spectrum_idx,
                 'rank': 0,
                 'smiles': '',
+                'inchi': '',
+                'inchikey': '',
                 'num_atoms': 0,
                 'valid': False,
                 'total_candidates': len(candidates)
