@@ -130,15 +130,31 @@ def get_paired_spectra(
     updated_spectra_list = []
     updated_mol_list = []
     for spec, mol in zip(spectra_list, mol_list):
-        if mol is not None:
-            for atom in mol.get_rdkit_mol().GetAtoms():
-                if atom.GetSymbol() not in ['C', 'O', 'P', 'N', 'S', 'Cl', 'F', 'H']:
-                    break
-            else:
+        if mol is None:
+            # mol为None（空SMILES），在推理模式下保留
+            if allow_none_smiles:
                 updated_spectra_list.append(spec)
                 updated_mol_list.append(mol)
+        else:
+            # mol不为None，检查rdkit分子
+            rdkit_mol = mol.get_rdkit_mol()
+            if rdkit_mol is not None and rdkit_mol.GetNumAtoms() > 0:
+                # 验证原子类型
+                valid = True
+                for atom in rdkit_mol.GetAtoms():
+                    if atom.GetSymbol() not in ['C', 'O', 'P', 'N', 'S', 'Cl', 'F', 'H']:
+                        valid = False
+                        break
+                if valid:
+                    updated_spectra_list.append(spec)
+                    updated_mol_list.append(mol)
+            else:
+                # 空rdkit分子（推理模式），保留
+                if allow_none_smiles:
+                    updated_spectra_list.append(spec)
+                    updated_mol_list.append(mol)
 
-    logging.info("Done creating spectra objects")
+    logging.info(f"Done creating spectra objects - Kept {len(updated_spectra_list)}/{len(spectra_list)} samples")
     return (updated_spectra_list, updated_mol_list)
 
 
@@ -162,19 +178,31 @@ class SpectraMolDataset(Dataset):
             featurizer (featurizers.PairedFeaturizer): _description_
         """
         super().__init__()
-        spectra_list, mol_list = list(zip(*spectra_mol_list))
-        self.spectra_list = np.array(spectra_list)
-        self.mol_list = np.array(mol_list)
-        self.smi_list = np.array([mol.get_smiles() for mol in self.mol_list])
-        self.inchikey_list = np.array([mol.get_inchikey() for mol in self.mol_list])
-        self.orig_len = len(self.mol_list)
-        self.len = len(self.mol_list)
+        
+        # 处理空列表情况（推理模式可能train/val为空）
+        if len(spectra_mol_list) == 0:
+            self.spectra_list = np.array([])
+            self.mol_list = np.array([])
+            self.smi_list = np.array([])
+            self.inchikey_list = np.array([])
+            self.orig_len = 0
+            self.len = 0
+        else:
+            spectra_list, mol_list = list(zip(*spectra_mol_list))
+            self.spectra_list = np.array(spectra_list)
+            self.mol_list = np.array(mol_list)
+            # 处理None mol（推理模式）
+            self.smi_list = np.array([mol.get_smiles() if mol is not None else "" for mol in self.mol_list])
+            self.inchikey_list = np.array([mol.get_inchikey() if mol is not None else "" for mol in self.mol_list])
+            self.orig_len = len(self.mol_list)
+            self.len = len(self.mol_list)
 
         # Extract all chem formulas
         self.chem_formulas = set()
-        for spec in spectra_list:
-            formula = spec.get_spectra_formula()
-            self.chem_formulas.add(formula)
+        if len(self.spectra_list) > 0:
+            for spec in self.spectra_list:
+                formula = spec.get_spectra_formula()
+                self.chem_formulas.add(formula)
 
         # Verify same length
         # For examples where we have mismatches, we should use None
@@ -343,9 +371,21 @@ class SpectraMolDataset(Dataset):
         mol = self.mol_list[idx]
         spec = self.spectra_list[idx]
 
-        mol_features = self.featurizer.featurize_mol(mol, train_mode=self.train_mode)
+        # 在测试/推理模式下，根据分子式创建dummy graph
+        if self.train_mode or mol is not None:
+            # 训练模式或有真实分子时才提取特征
+            mol_features = self.featurizer.featurize_mol(mol, train_mode=self.train_mode)
+            graph_features = self.featurizer.featurize_graph(mol, train_mode=self.train_mode)
+        else:
+            # 推理模式且mol为None，根据分子式创建dummy graph
+            mol_features = {}
+            formula = spec.get_spectra_formula()
+            # 使用分子式创建dummy graph作为扩散模型的起始模板
+            from mist.data.featurizers import GraphFeaturizer
+            dummy_graph = GraphFeaturizer.create_dummy_graph_from_formula(formula)
+            graph_features = dummy_graph
+        
         spec_features = self.featurizer.featurize_spec(spec, train_mode=self.train_mode)
-        graph_features = self.featurizer.featurize_graph(mol, train_mode=self.train_mode)
 
         return {
             "spec": [spec_features],
@@ -675,10 +715,17 @@ def _collate_pairs_graph(
     spec_dict = spec_collate_fn([j for jj in input_batch for j in jj["spec"]])
 
     #### Mol loading
-    mol_dict = mol_collate_fn([j for jj in input_batch for j in jj["mol"]])
+    mol_list = [j for jj in input_batch for j in jj["mol"]]
+    # 过滤空字典（推理模式）
+    if all(isinstance(m, dict) and len(m) == 0 for m in mol_list):
+        mol_dict = {"mols": torch.zeros((len(mol_list), 4096))}  # 默认fingerprint大小
+    else:
+        mol_dict = mol_collate_fn(mol_list)
 
     ### Graph loading
-    graph_batch = graph_collate_fn([j for jj in input_batch for j in jj["graph"]])
+    graph_list = [j for jj in input_batch for j in jj["graph"]]
+    # graph_collate_fn会处理空字典，创建dummy graphs（推理模式）
+    graph_batch = graph_collate_fn(graph_list)
 
     # Get the paired molecule and paired spectra indices
     mol_indices = torch.tensor([j for jj in input_batch for j in jj["mol_indices"]])

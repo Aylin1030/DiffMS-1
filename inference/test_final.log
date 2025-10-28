@@ -1,0 +1,47 @@
+2025-10-28 15:10:34,588 - __main__ - INFO - ================================================================================
+2025-10-28 15:10:34,588 - __main__ - INFO - 开始推理
+2025-10-28 15:10:34,588 - __main__ - INFO - ================================================================================
+2025-10-28 15:10:34,588 - __main__ - INFO - 工作目录: /Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src
+/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/lightning_utilities/core/imports.py:13: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+2025-10-28 15:10:37,756 - __main__ - INFO - 
+步骤 1: 加载配置
+2025-10-28 15:10:37,787 - __main__ - INFO - 从YAML配置文件加载配置...
+2025-10-28 15:10:37,788 - __main__ - INFO - 配置目录: /Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/configs
+2025-10-28 15:10:37,822 - __main__ - INFO - ✓ 配置加载成功
+Traceback (most recent call last):
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 297, in <module>
+    main()
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 293, in main
+    run_inference(args.checkpoint_path, args.output_dir, max_count=args.max_count)
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 172, in run_inference
+    cfg = modify_config_for_inference(cfg, checkpoint_path, max_count=max_count)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 94, in modify_config_for_inference
+    cfg.dataset.allow_none_smiles = True
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/omegaconf/dictconfig.py", line 337, in __setattr__
+    raise e
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/omegaconf/dictconfig.py", line 334, in __setattr__
+    self.__set_impl(key, value)
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/omegaconf/dictconfig.py", line 318, in __set_impl
+    self._set_item_impl(key, value)
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/omegaconf/basecontainer.py", line 549, in _set_item_impl
+    self._validate_set(key, value)
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/omegaconf/dictconfig.py", line 180, in _validate_set
+    target = self._get_node(key) if key is not None else self
+             ^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/omegaconf/dictconfig.py", line 475, in _get_node
+    self._validate_get(key)
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/omegaconf/dictconfig.py", line 164, in _validate_get
+    self._format_and_raise(
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/omegaconf/base.py", line 231, in _format_and_raise
+    format_and_raise(
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/omegaconf/_utils.py", line 899, in format_and_raise
+    _raise(ex, cause)
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/omegaconf/_utils.py", line 797, in _raise
+    raise ex.with_traceback(sys.exc_info()[2])  # set env var OC_CAUSE=1 for full trace
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+omegaconf.errors.ConfigAttributeError: Key 'allow_none_smiles' is not in struct
+    full_key: dataset.allow_none_smiles
+    object_type=dict

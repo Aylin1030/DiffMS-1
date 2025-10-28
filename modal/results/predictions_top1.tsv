@@ -1,0 +1,2 @@
+spectrum_id	rank	smiles	num_atoms	valid	total_candidates
+0	1	CC1ccC=C23C=CC(CC2)C2C4CC5C6CC16C3C542	20	True	10

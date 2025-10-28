@@ -127,6 +127,10 @@ class Featurizer(ABC):
 
     def featurize(self, obj: object, train_mode=False, **kwargs) -> Dict:
         """Featurizer a single object"""
+        # 处理None对象（推理模式）
+        if obj is None:
+            return {}
+        
         encoded_obj = self._encode(obj)
 
         if self.cache_featurizers:
@@ -161,6 +165,8 @@ class MolFeaturizer(Featurizer):
 
     def _encode(self, mol: data.Mol) -> str:
         """Encode mol into smiles repr"""
+        if mol is None:
+            return ""
         smi = mol.get_smiles()
         return smi
 
@@ -186,7 +192,58 @@ class GraphFeaturizer(Featurizer):
         return mol.inchikey
     
     @staticmethod
+    def parse_formula(formula_str: str) -> dict:
+        """解析分子式，返回元素计数字典"""
+        import re
+        elements = {}
+        if not formula_str:
+            return elements
+        pattern = r'([A-Z][a-z]?)(\d*)'
+        for match in re.finditer(pattern, formula_str):
+            element = match.group(1)
+            count = match.group(2)
+            count = int(count) if count else 1
+            elements[element] = elements.get(element, 0) + count
+        return elements
+    
+    @staticmethod
+    def create_dummy_graph_from_formula(formula_str: str) -> Data:
+        """根据分子式创建dummy graph"""
+        elements = GraphFeaturizer.parse_formula(formula_str)
+        
+        # 原子类型映射 (与训练时一致)
+        atom_type_map = {'C': 0, 'O': 1, 'P': 2, 'N': 3, 'S': 4, 'Cl': 5, 'F': 6, 'Br': 7}
+        
+        # 计算重原子数（不含H）
+        num_atoms = sum(count for elem, count in elements.items() if elem != 'H')
+        
+        if num_atoms == 0:
+            num_atoms = 20  # 如果没有重原子，使用默认值
+        
+        # 创建节点特征
+        x = torch.zeros(num_atoms, 8, dtype=torch.float32)
+        
+        # 根据元素分配节点类型
+        idx = 0
+        for elem, count in sorted(elements.items()):
+            if elem == 'H':
+                continue
+            atom_idx = atom_type_map.get(elem, 0)  # 未知元素默认为C
+            for _ in range(count):
+                if idx < num_atoms:
+                    x[idx, atom_idx] = 1
+                    idx += 1
+        
+        # 创建空边（模型会在扩散过程中生成）
+        edge_index = torch.zeros((2, 0), dtype=torch.long)
+        edge_attr = torch.zeros((0, 5), dtype=torch.float32)
+        
+        return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+    
+    @staticmethod
     def collate_fn(graphs: List[Data]) -> Batch:
+        # 推理模式：graphs已经是Data对象（根据分子式创建的dummy graphs）
+        # 训练模式：graphs也是Data对象
         return Batch.from_data_list(graphs)
     
     def _featurize(self, obj: object) -> Data:
@@ -250,7 +307,18 @@ class FingerprintFeaturizer(MolFeaturizer):
 
     @staticmethod
     def collate_fn(mols: List[dict]) -> dict:
-        fp_ar = torch.tensor(np.array(mols))
+        # 过滤空字典（推理模式下的None mol）并使用零数组替代
+        cleaned_mols = []
+        for mol in mols:
+            if isinstance(mol, dict) and len(mol) == 0:
+                # 空字典，使用零数组（推理模式）
+                cleaned_mols.append(np.zeros(4096))  # morgan4096的默认大小
+            elif isinstance(mol, dict):
+                cleaned_mols.append(list(mol.values())[0] if mol else np.zeros(4096))
+            else:
+                cleaned_mols.append(mol if mol is not None else np.zeros(4096))
+        
+        fp_ar = torch.tensor(np.array(cleaned_mols))
         return {"mols": fp_ar}
 
     def featurize_smiles(self, smiles: str, **kwargs) -> np.ndarray:

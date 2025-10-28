@@ -17,23 +17,6 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-# 添加DiffMS源代码路径
-diffms_path = Path(__file__).parent.parent / "src"
-sys.path.insert(0, str(diffms_path))
-
-import hydra
-from omegaconf import DictConfig, OmegaConf
-from pytorch_lightning import Trainer
-from pytorch_lightning.loggers import CSVLogger
-
-from src import utils
-from src.diffusion_model_spec2mol import Spec2MolDenoisingDiffusion
-from src.diffusion.extra_features import DummyExtraFeatures, ExtraFeatures
-from src.metrics.molecular_metrics_discrete import TrainMolecularMetricsDiscrete
-from src.diffusion.extra_features_molecular import ExtraMolecularFeatures
-from src.analysis.visualization import MolecularVisualization
-from src.datasets import spec2mol_dataset
-
 
 def setup_logging():
     """设置日志"""
@@ -48,35 +31,37 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 
-def load_config(checkpoint_path: str):
+def load_config_from_yaml():
     """
-    从checkpoint加载配置并修改为推理模式
-    
-    Args:
-        checkpoint_path: 预训练模型路径
+    从YAML配置文件加载配置（因为checkpoint只有权重）
     
     Returns:
         cfg: 配置对象
     """
+    from omegaconf import DictConfig, OmegaConf
+    import hydra
+    from hydra import compose, initialize_config_dir
+    
     logger = logging.getLogger(__name__)
-    logger.info(f"从checkpoint加载配置: {checkpoint_path}")
+    logger.info("从YAML配置文件加载配置...")
     
-    # 加载checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    # DiffMS配置目录
+    config_dir = Path.cwd() / ".." / "configs"  # 相对于src目录
+    config_dir = config_dir.resolve()
     
-    # 从checkpoint中获取配置
-    if 'hyper_parameters' in checkpoint:
-        cfg = checkpoint['hyper_parameters'].get('cfg', None)
-    else:
-        raise ValueError("Checkpoint中未找到配置信息")
+    logger.info(f"配置目录: {config_dir}")
     
-    if cfg is None:
-        raise ValueError("无法从checkpoint提取配置")
+    # 使用Hydra加载配置
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        # 加载msg数据集配置
+        cfg = compose(
+            config_name="config",
+            overrides=[
+                "dataset=msg",  # 使用MSG数据集配置作为基础
+            ]
+        )
     
-    # 转换为OmegaConf对象（如果还不是的话）
-    if not isinstance(cfg, DictConfig):
-        cfg = OmegaConf.create(cfg)
-    
+    logger.info("✓ 配置加载成功")
     return cfg
 
 
@@ -92,10 +77,15 @@ def modify_config_for_inference(cfg, checkpoint_path: str, max_count: int = None
     Returns:
         modified_cfg: 修改后的配置
     """
+    from omegaconf import OmegaConf
+    
     logger = logging.getLogger(__name__)
     
     # 创建配置副本
     cfg = cfg.copy()
+    
+    # 允许添加新字段
+    OmegaConf.set_struct(cfg, False)
     
     # 修改数据集为自定义数据集
     cfg.dataset.name = 'custom_data'
@@ -104,6 +94,9 @@ def modify_config_for_inference(cfg, checkpoint_path: str, max_count: int = None
     cfg.dataset.labels_file = '/Users/aylin/yaolab_projects/madgen_yaolab/msdata/processed_data/labels.tsv'
     cfg.dataset.spec_folder = '/Users/aylin/yaolab_projects/madgen_yaolab/msdata/processed_data/spec_files'
     cfg.dataset.subform_folder = '/Users/aylin/yaolab_projects/madgen_yaolab/msdata/processed_data/subformulae/default_subformulae'
+    
+    # 关键配置：允许空SMILES（推理模式）
+    cfg.dataset.allow_none_smiles = True
     
     # 使用MSG的统计信息（绝对路径）
     cfg.dataset.stats_dir = '/Users/aylin/Downloads/msg'
@@ -124,7 +117,11 @@ def modify_config_for_inference(cfg, checkpoint_path: str, max_count: int = None
     # 关闭wandb
     cfg.general.wandb = 'disabled'
     
-    logger.info("配置已修改为推理模式")
+    # 使用MSG Large Model配置（与checkpoint匹配）
+    cfg.model.encoder_hidden_dim = 512       # Large Model (MSG)
+    cfg.model.encoder_magma_modulo = 2048    # Large Model (MSG)
+    
+    logger.info("配置已修改为推理模式（使用MSG Large Model配置）")
     logger.info(f"数据集: {cfg.dataset.name}")
     logger.info(f"数据路径: {cfg.dataset.datadir}")
     logger.info(f"使用GPU: {cfg.general.gpus > 0}")
@@ -146,6 +143,30 @@ def run_inference(checkpoint_path: str, output_dir: str = "./predictions", max_c
     logger.info("开始推理")
     logger.info("=" * 80)
     
+    # 设置Python路径和工作目录
+    diffms_dir = Path(__file__).parent.parent / "DiffMS"
+    diffms_src_dir = diffms_dir / "src"
+    
+    # 添加两个路径：DiffMS用于 'from src import'，DiffMS/src用于相对导入
+    sys.path.insert(0, str(diffms_src_dir))
+    sys.path.insert(0, str(diffms_dir))
+    
+    # 切换到src目录（配置文件在这里）
+    os.chdir(str(diffms_src_dir))
+    logger.info(f"工作目录: {os.getcwd()}")
+    
+    # 导入DiffMS模块（在设置路径后）
+    from omegaconf import DictConfig, OmegaConf
+    from pytorch_lightning import Trainer
+    from pytorch_lightning.loggers import CSVLogger
+    from src import utils
+    from src.diffusion_model_spec2mol import Spec2MolDenoisingDiffusion
+    from src.diffusion.extra_features import DummyExtraFeatures, ExtraFeatures
+    from src.metrics.molecular_metrics_discrete import TrainMolecularMetricsDiscrete
+    from src.diffusion.extra_features_molecular import ExtraMolecularFeatures
+    from src.analysis.visualization import MolecularVisualization
+    from src.datasets import spec2mol_dataset
+    
     # 禁用RDKit警告
     from rdkit import RDLogger
     RDLogger.DisableLog('rdApp.*')
@@ -154,33 +175,42 @@ def run_inference(checkpoint_path: str, output_dir: str = "./predictions", max_c
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # 设置工作目录为DiffMS/src
-    diffms_src_dir = Path(__file__).parent.parent / "src"
-    os.chdir(str(diffms_src_dir))
-    logger.info(f"工作目录: {os.getcwd()}")
-    
     # 加载和修改配置
     logger.info("\n步骤 1: 加载配置")
-    cfg = load_config(checkpoint_path)
+    cfg = load_config_from_yaml()
     cfg = modify_config_for_inference(cfg, checkpoint_path, max_count=max_count)
     
     # 创建数据模块
     logger.info("\n步骤 2: 创建数据模块")
     datamodule = spec2mol_dataset.Spec2MolDataModule(cfg)
+    logger.info(f"  Train数据集大小: {len(datamodule.train_dataset)}")
+    logger.info(f"  Val数据集大小: {len(datamodule.val_dataset)}")
+    logger.info(f"  Test数据集大小: {len(datamodule.test_dataset)}")
+    
     dataset_infos = spec2mol_dataset.Spec2MolDatasetInfos(datamodule, cfg)
     
-    # 创建特征
+    # 推理模式：直接从checkpoint/config设置维度，不从数据推导
+    # 这些维度必须与训练时的维度一致
+    logger.info("推理模式：使用checkpoint中的固定维度")
+    
+    # MSG数据集的标准维度（从checkpoint推导）
+    dataset_infos.input_dims = {
+        'X': 16,    # 从checkpoint error可以看到：16
+        'E': 5,     # 5种边类型
+        'y': 2061   # 从checkpoint error可以看到：2061
+    }
+    dataset_infos.output_dims = {
+        'X': 8,     # 8种原子类型
+        'E': 5,     # 5种边类型
+        'y': 2048   # 从checkpoint mlp_out_y看到
+    }
+    
+    # 创建特征（但不会被调用，因为我们不重新计算维度）
     domain_features = ExtraMolecularFeatures(dataset_infos=dataset_infos)
     if cfg.model.extra_features is not None:
         extra_features = ExtraFeatures(cfg.model.extra_features, dataset_info=dataset_infos)
     else:
         extra_features = DummyExtraFeatures()
-    
-    dataset_infos.compute_input_output_dims(
-        datamodule=datamodule,
-        extra_features=extra_features,
-        domain_features=domain_features
-    )
     
     # 创建指标和可视化工具
     train_metrics = TrainMolecularMetricsDiscrete(dataset_infos)
@@ -197,19 +227,26 @@ def run_inference(checkpoint_path: str, output_dir: str = "./predictions", max_c
         'domain_features': domain_features
     }
     
-    # 加载模型
-    logger.info("\n步骤 3: 加载预训练模型")
-    logger.info(f"Checkpoint路径: {checkpoint_path}")
-    
-    model = Spec2MolDenoisingDiffusion.load_from_checkpoint(
-        checkpoint_path,
+    # 创建模型
+    logger.info("\n步骤 3: 创建模型")
+    model = Spec2MolDenoisingDiffusion(
+        cfg=cfg,
         **model_kwargs
     )
     
-    # 更新模型配置
-    model.cfg = cfg
+    # 加载权重
+    logger.info(f"加载权重: {checkpoint_path}")
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
     
-    logger.info("模型加载成功")
+    if 'state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['state_dict'])
+        logger.info("✓ 从checkpoint['state_dict']加载权重")
+    else:
+        # 如果checkpoint本身就是state_dict
+        model.load_state_dict(checkpoint)
+        logger.info("✓ 直接加载checkpoint作为权重")
+    
+    logger.info("✓ 模型创建和权重加载成功")
     
     # 创建Trainer
     logger.info("\n步骤 4: 创建Trainer并运行推理")

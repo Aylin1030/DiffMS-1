@@ -1,0 +1,52 @@
+2025-10-28 15:13:57,486 - __main__ - INFO - ================================================================================
+2025-10-28 15:13:57,486 - __main__ - INFO - 开始推理
+2025-10-28 15:13:57,486 - __main__ - INFO - ================================================================================
+2025-10-28 15:13:57,486 - __main__ - INFO - 工作目录: /Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src
+/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/lightning_utilities/core/imports.py:13: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+2025-10-28 15:14:00,697 - __main__ - INFO - 
+步骤 1: 加载配置
+2025-10-28 15:14:00,729 - __main__ - INFO - 从YAML配置文件加载配置...
+2025-10-28 15:14:00,730 - __main__ - INFO - 配置目录: /Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/configs
+2025-10-28 15:14:00,765 - __main__ - INFO - ✓ 配置加载成功
+2025-10-28 15:14:00,767 - __main__ - INFO - 限制测试数据量: 1
+2025-10-28 15:14:00,767 - __main__ - INFO - 配置已修改为推理模式
+2025-10-28 15:14:00,767 - __main__ - INFO - 数据集: custom_data
+2025-10-28 15:14:00,767 - __main__ - INFO - 数据路径: /Users/aylin/yaolab_projects/madgen_yaolab/msdata/processed_data
+2025-10-28 15:14:00,767 - __main__ - INFO - 使用GPU: False
+2025-10-28 15:14:00,767 - __main__ - INFO - 
+步骤 2: 创建数据模块
+2025-10-28 15:14:00,775 - root - INFO - Loading paired specs
+1
+<class 'int'>
+2025-10-28 15:14:00,791 - root - INFO - Converting paired samples into Spectra objects
+0it [00:00, ?it/s]1it [00:00, 7002.18it/s]
+0it [00:00, ?it/s]1it [00:00, 1927.53it/s]
+0it [00:00, ?it/s]1it [00:00, 110376.42it/s]
+2025-10-28 15:14:00,799 - root - INFO - Done creating spectra objects
+Traceback (most recent call last):
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 302, in <module>
+    main()
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 298, in main
+    run_inference(args.checkpoint_path, args.output_dir, max_count=args.max_count)
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 182, in run_inference
+    dataset_infos = spec2mol_dataset.Spec2MolDatasetInfos(datamodule, cfg)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src/datasets/spec2mol_dataset.py", line 197, in __init__
+    self.n_nodes = datamodule.node_counts()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src/datasets/spec2mol_dataset.py", line 93, in node_counts
+    for loader in [self.train_dataloader(), self.val_dataloader()]:
+                   ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src/datasets/spec2mol_dataset.py", line 65, in train_dataloader
+    return get_paired_loader_graph(self.train_dataset, shuffle=True, batch_size=self.batch_size, **self.kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src/mist/data/datasets.py", line 759, in get_paired_loader_graph
+    return DataLoader(
+           ^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/torch/utils/data/dataloader.py", line 388, in __init__
+    sampler = RandomSampler(dataset, generator=generator)  # type: ignore[arg-type]
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/torch/utils/data/sampler.py", line 156, in __init__
+    raise ValueError(
+ValueError: num_samples should be a positive integer value, but got num_samples=0

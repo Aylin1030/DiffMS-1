@@ -385,44 +385,61 @@ class Spec2MolDenoisingDiffusion(pl.LightningModule):
         elif self.merge == 'downproject_4096':
             data.y = self.merge_function(output)
 
-        dense_data, node_mask = utils.to_dense(data.x, data.edge_index, data.edge_attr, data.batch)
-        dense_data = dense_data.mask(node_mask)
-        noisy_data = self.apply_noise(dense_data.X, dense_data.E, data.y, node_mask)
-        extra_data = self.compute_extra_data(noisy_data)
+        # 检查是否是推理模式（没有真实分子数据）
+        is_inference_mode = not hasattr(data, 'inchi') or data.inchi is None or len(getattr(data, 'inchi', [])) == 0
+        
+        if not is_inference_mode:
+            # 训练/验证模式：计算loss和metrics
+            dense_data, node_mask = utils.to_dense(data.x, data.edge_index, data.edge_attr, data.batch)
+            dense_data = dense_data.mask(node_mask)
+            noisy_data = self.apply_noise(dense_data.X, dense_data.E, data.y, node_mask)
+            extra_data = self.compute_extra_data(noisy_data)
 
-        pred = self.forward(noisy_data, extra_data, node_mask)
-        pred.X = dense_data.X
-        pred.Y = data.y
+            pred = self.forward(noisy_data, extra_data, node_mask)
+            pred.X = dense_data.X
+            pred.Y = data.y
 
-        nll = self.compute_val_loss(pred, noisy_data, dense_data.X, dense_data.E, data.y,  node_mask, test=True)
+            nll = self.compute_val_loss(pred, noisy_data, dense_data.X, dense_data.E, data.y,  node_mask, test=True)
 
-        true_E = torch.reshape(dense_data.E, (-1, dense_data.E.size(-1)))  # (bs * n * n, de)
-        masked_pred_E = torch.reshape(pred.E, (-1, pred.E.size(-1)))   # (bs * n * n, de)
-        mask_E = (true_E != 0.).any(dim=-1)
+            true_E = torch.reshape(dense_data.E, (-1, dense_data.E.size(-1)))  # (bs * n * n, de)
+            masked_pred_E = torch.reshape(pred.E, (-1, pred.E.size(-1)))   # (bs * n * n, de)
+            mask_E = (true_E != 0.).any(dim=-1)
 
-        flat_true_E = true_E[mask_E, :]
-        flat_pred_E = masked_pred_E[mask_E, :]
+            flat_true_E = true_E[mask_E, :]
+            flat_pred_E = masked_pred_E[mask_E, :]
 
-        self.test_CE(flat_pred_E, flat_true_E)
+            self.test_CE(flat_pred_E, flat_true_E)
 
-        true_mols = [Chem.inchi.MolFromInchi(data.get_example(idx).inchi) for idx in range(len(data))] # Is this correct?
+            true_mols = [Chem.inchi.MolFromInchi(data.get_example(idx).inchi) for idx in range(len(data))]
+        else:
+            # 推理模式：跳过loss计算
+            true_mols = [None] * len(data)  # 推理模式没有真实分子
+        
+        # 生成预测分子（训练/验证/推理模式都需要）
         predicted_mols = [list() for _ in range(len(data))]
-
         for _ in range(self.test_num_samples):
             for idx, mol in enumerate(self.sample_batch(data)):
                 predicted_mols[idx].append(mol)
 
+        # 保存预测结果
         with open(f"preds/{self.name}_rank_{self.global_rank}_pred_{i}.pkl", "wb") as f:
             pickle.dump(predicted_mols, f)
-        with open(f"preds/{self.name}_rank_{self.global_rank}_true_{i}.pkl", "wb") as f:
-            pickle.dump(true_mols, f)
         
-        for idx in range(len(data)):
-            self.test_k_acc.update(predicted_mols[idx], true_mols[idx])
-            self.test_sim_metrics.update(predicted_mols[idx], true_mols[idx])
-            self.test_validity.update(predicted_mols[idx])
+        if not is_inference_mode:
+            # 只有在有真实分子时才保存和计算metrics
+            with open(f"preds/{self.name}_rank_{self.global_rank}_true_{i}.pkl", "wb") as f:
+                pickle.dump(true_mols, f)
+            
+            for idx in range(len(data)):
+                self.test_k_acc.update(predicted_mols[idx], true_mols[idx])
+                self.test_sim_metrics.update(predicted_mols[idx], true_mols[idx])
+        
+        # 更新validity metrics（对所有模式）
+        for pred_mol_list in predicted_mols:
+            self.test_validity.update(pred_mol_list)
 
-        return {'loss': nll}
+        # 返回loss（推理模式下为0）
+        return {'loss': nll if not is_inference_mode else 0.0}
 
     def on_test_epoch_end(self) -> None:
         """ Measure likelihood on a test set and compute stability metrics. """

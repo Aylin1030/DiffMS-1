@@ -1,0 +1,89 @@
+2025-10-28 15:37:40,616 - __main__ - INFO - ================================================================================
+2025-10-28 15:37:40,617 - __main__ - INFO - 开始推理
+2025-10-28 15:37:40,617 - __main__ - INFO - ================================================================================
+2025-10-28 15:37:40,617 - __main__ - INFO - 工作目录: /Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src
+/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/lightning_utilities/core/imports.py:13: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+2025-10-28 15:37:43,689 - __main__ - INFO - 
+步骤 1: 加载配置
+2025-10-28 15:37:43,718 - __main__ - INFO - 从YAML配置文件加载配置...
+2025-10-28 15:37:43,718 - __main__ - INFO - 配置目录: /Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/configs
+2025-10-28 15:37:43,750 - __main__ - INFO - ✓ 配置加载成功
+2025-10-28 15:37:43,751 - __main__ - INFO - 限制测试数据量: 1
+2025-10-28 15:37:43,751 - __main__ - INFO - 配置已修改为推理模式（使用MSG Large Model配置）
+2025-10-28 15:37:43,751 - __main__ - INFO - 数据集: custom_data
+2025-10-28 15:37:43,751 - __main__ - INFO - 数据路径: /Users/aylin/yaolab_projects/madgen_yaolab/msdata/processed_data
+2025-10-28 15:37:43,751 - __main__ - INFO - 使用GPU: False
+2025-10-28 15:37:43,751 - __main__ - INFO - 
+步骤 2: 创建数据模块
+2025-10-28 15:37:43,759 - root - INFO - Loading paired specs
+1
+<class 'int'>
+2025-10-28 15:37:43,775 - root - INFO - Converting paired samples into Spectra objects
+0it [00:00, ?it/s]1it [00:00, 11214.72it/s]
+0it [00:00, ?it/s]1it [00:00, 2916.76it/s]
+0it [00:00, ?it/s]1it [00:00, 107546.26it/s]
+2025-10-28 15:37:43,783 - root - INFO - Done creating spectra objects - Kept 1/1 samples
+2025-10-28 15:37:43,784 - __main__ - INFO -   Train数据集大小: 0
+2025-10-28 15:37:43,784 - __main__ - INFO -   Val数据集大小: 0
+2025-10-28 15:37:43,784 - __main__ - INFO -   Test数据集大小: 1
+2025-10-28 15:37:43,787 - __main__ - INFO - 推理模式：使用checkpoint中的固定维度
+2025-10-28 15:37:43,790 - __main__ - INFO - 
+步骤 3: 创建模型
+2025-10-28 15:37:43,951 - root - INFO - Marginal distribution of the classes: tensor([0.7458, 0.1796, 0.0032, 0.0585, 0.0051, 0.0044, 0.0034, 0.0000]) for nodes, tensor([9.2989e-01, 4.3217e-02, 5.0077e-03, 4.0890e-05, 2.1845e-02]) for edges
+2025-10-28 15:37:43,954 - __main__ - INFO - 加载权重: /Users/aylin/Downloads/checkpoints/diffms_msg.ckpt
+2025-10-28 15:37:44,093 - __main__ - INFO - ✓ 从checkpoint['state_dict']加载权重
+2025-10-28 15:37:44,093 - __main__ - INFO - ✓ 模型创建和权重加载成功
+2025-10-28 15:37:44,093 - __main__ - INFO - 
+步骤 4: 创建Trainer并运行推理
+2025-10-28 15:37:44,129 - pytorch_lightning.utilities.rank_zero - INFO - GPU available: True (mps), used: False
+2025-10-28 15:37:44,135 - pytorch_lightning.utilities.rank_zero - INFO - TPU available: False, using: 0 TPU cores
+2025-10-28 15:37:44,135 - pytorch_lightning.utilities.rank_zero - INFO - HPU available: False, using: 0 HPUs
+/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/pytorch_lightning/trainer/setup.py:177: GPU available but not used. You can set it by doing `Trainer(accelerator='gpu')`.
+2025-10-28 15:37:44,136 - __main__ - INFO - 开始生成分子结构...
+/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/pytorch_lightning/trainer/connectors/data_connector.py:419: Consider setting `persistent_workers=True` in 'test_dataloader' to speed up the dataloader worker initialization.
+/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/lightning_utilities/core/imports.py:13: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+Testing: |          | 0/? [00:00<?, ?it/s]2025-10-28 15:37:46,259 - root - INFO - Starting test...
+Testing:   0%|          | 0/1 [00:00<?, ?it/s]Testing DataLoader 0:   0%|          | 0/1 [00:00<?, ?it/s]Traceback (most recent call last):
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 320, in <module>
+    main()
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 316, in main
+    run_inference(args.checkpoint_path, args.output_dir, max_count=args.max_count)
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 268, in run_inference
+    results = trainer.test(model, datamodule=datamodule)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 753, in test
+    return call._call_and_handle_interrupt(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/pytorch_lightning/trainer/call.py", line 44, in _call_and_handle_interrupt
+    return trainer_fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 793, in _test_impl
+    results = self._run(model, ckpt_path=ckpt_path)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 986, in _run
+    results = self._run_stage()
+              ^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 1023, in _run_stage
+    return self._evaluation_loop.run()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/pytorch_lightning/loops/utilities.py", line 182, in _decorator
+    return loop_run(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/pytorch_lightning/loops/evaluation_loop.py", line 135, in run
+    self._evaluation_step(batch, batch_idx, dataloader_idx, dataloader_iter)
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/pytorch_lightning/loops/evaluation_loop.py", line 396, in _evaluation_step
+    output = call._call_strategy_hook(trainer, hook_name, *step_args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/pytorch_lightning/trainer/call.py", line 311, in _call_strategy_hook
+    output = fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/pytorch_lightning/strategies/strategy.py", line 424, in test_step
+    return self.lightning_module.test_step(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src/diffusion_model_spec2mol.py", line 425, in test_step
+    with open(f"preds/{self.name}_rank_{self.global_rank}_pred_{i}.pkl", "wb") as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'preds/custom_inference_rank_0_pred_0.pkl'
+Testing DataLoader 0:   0%|          | 0/1 [15:12<?, ?it/s]

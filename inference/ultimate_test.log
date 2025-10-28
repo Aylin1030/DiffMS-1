@@ -1,0 +1,67 @@
+2025-10-28 15:20:03,855 - __main__ - INFO - ================================================================================
+2025-10-28 15:20:03,855 - __main__ - INFO - 开始推理
+2025-10-28 15:20:03,855 - __main__ - INFO - ================================================================================
+2025-10-28 15:20:03,855 - __main__ - INFO - 工作目录: /Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src
+/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/lightning_utilities/core/imports.py:13: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+2025-10-28 15:20:07,143 - __main__ - INFO - 
+步骤 1: 加载配置
+2025-10-28 15:20:07,173 - __main__ - INFO - 从YAML配置文件加载配置...
+2025-10-28 15:20:07,174 - __main__ - INFO - 配置目录: /Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/configs
+2025-10-28 15:20:07,207 - __main__ - INFO - ✓ 配置加载成功
+2025-10-28 15:20:07,208 - __main__ - INFO - 限制测试数据量: 1
+2025-10-28 15:20:07,208 - __main__ - INFO - 配置已修改为推理模式
+2025-10-28 15:20:07,208 - __main__ - INFO - 数据集: custom_data
+2025-10-28 15:20:07,208 - __main__ - INFO - 数据路径: /Users/aylin/yaolab_projects/madgen_yaolab/msdata/processed_data
+2025-10-28 15:20:07,208 - __main__ - INFO - 使用GPU: False
+2025-10-28 15:20:07,208 - __main__ - INFO - 
+步骤 2: 创建数据模块
+2025-10-28 15:20:07,215 - root - INFO - Loading paired specs
+1
+<class 'int'>
+2025-10-28 15:20:07,231 - root - INFO - Converting paired samples into Spectra objects
+0it [00:00, ?it/s]1it [00:00, 10894.30it/s]
+0it [00:00, ?it/s]1it [00:00, 2896.62it/s]
+0it [00:00, ?it/s]1it [00:00, 139810.13it/s]
+2025-10-28 15:20:07,239 - root - INFO - Done creating spectra objects - Kept 1/1 samples
+2025-10-28 15:20:07,240 - __main__ - INFO -   Train数据集大小: 0
+2025-10-28 15:20:07,240 - __main__ - INFO -   Val数据集大小: 0
+2025-10-28 15:20:07,240 - __main__ - INFO -   Test数据集大小: 1
+/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/lightning_utilities/core/imports.py:13: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+Traceback (most recent call last):
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 306, in <module>
+    main()
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 302, in main
+    run_inference(args.checkpoint_path, args.output_dir, max_count=args.max_count)
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 195, in run_inference
+    dataset_infos.compute_input_output_dims(
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src/datasets/spec2mol_dataset.py", line 288, in compute_input_output_dims
+    example_batch = next(iter(loader))['graph']
+                    ^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/torch/utils/data/dataloader.py", line 734, in __next__
+    data = self._next_data()
+           ^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/torch/utils/data/dataloader.py", line 1516, in _next_data
+    return self._process_data(data, worker_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/torch/utils/data/dataloader.py", line 1551, in _process_data
+    data.reraise()
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/torch/_utils.py", line 769, in reraise
+    raise exception
+TypeError: Caught TypeError in DataLoader worker process 0.
+Original Traceback (most recent call last):
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/torch/utils/data/_utils/worker.py", line 349, in _worker_loop
+    data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/torch/utils/data/_utils/fetch.py", line 55, in fetch
+    return self.collate_fn(data)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src/mist/data/datasets.py", line 706, in _collate_pairs_graph
+    mol_dict = mol_collate_fn([j for jj in input_batch for j in jj["mol"]])
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src/mist/data/featurizers.py", line 259, in collate_fn
+    fp_ar = torch.tensor(np.array(mols))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: can't convert np.ndarray of type numpy.object_. The only supported types are: float64, float32, float16, complex64, complex128, int64, int32, int16, int8, uint64, uint32, uint16, uint8, and bool.
+

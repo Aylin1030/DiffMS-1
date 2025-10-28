@@ -1,0 +1,41 @@
+2025-10-28 15:08:56,415 - __main__ - INFO - ================================================================================
+2025-10-28 15:08:56,415 - __main__ - INFO - 开始推理
+2025-10-28 15:08:56,415 - __main__ - INFO - ================================================================================
+2025-10-28 15:08:56,415 - __main__ - INFO - 工作目录: /Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src
+/Users/aylin/DreaMS/.venv/lib/python3.12/site-packages/lightning_utilities/core/imports.py:13: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+2025-10-28 15:08:59,644 - __main__ - INFO - 
+步骤 1: 加载配置
+2025-10-28 15:08:59,675 - __main__ - INFO - 从YAML配置文件加载配置...
+2025-10-28 15:08:59,675 - __main__ - INFO - 配置目录: /Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/configs
+2025-10-28 15:08:59,709 - __main__ - INFO - ✓ 配置加载成功
+2025-10-28 15:08:59,710 - __main__ - INFO - 限制测试数据量: 1
+2025-10-28 15:08:59,710 - __main__ - INFO - 配置已修改为推理模式
+2025-10-28 15:08:59,710 - __main__ - INFO - 数据集: custom_data
+2025-10-28 15:08:59,710 - __main__ - INFO - 数据路径: /Users/aylin/yaolab_projects/madgen_yaolab/msdata/processed_data
+2025-10-28 15:08:59,710 - __main__ - INFO - 使用GPU: False
+2025-10-28 15:08:59,710 - __main__ - INFO - 
+步骤 2: 创建数据模块
+2025-10-28 15:08:59,718 - root - INFO - Loading paired specs
+1
+<class 'int'>
+2025-10-28 15:08:59,735 - root - INFO - Converting paired samples into Spectra objects
+0it [00:00, ?it/s]1it [00:00, 10754.63it/s]
+0it [00:00, ?it/s]1it [00:00, 2792.48it/s]
+0it [00:00, ?it/s]1it [00:00, 110376.42it/s]
+2025-10-28 15:08:59,742 - root - INFO - Done creating spectra objects
+Traceback (most recent call last):
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 294, in <module>
+    main()
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 290, in main
+    run_inference(args.checkpoint_path, args.output_dir, max_count=args.max_count)
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/inference/run_inference.py", line 173, in run_inference
+    datamodule = spec2mol_dataset.Spec2MolDataModule(cfg)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src/datasets/spec2mol_dataset.py", line 59, in __init__
+    ms_datasets = {'train': datasets.SpectraMolDataset(spectra_mol_list=train, featurizer=paired_featurizer, **cfg.dataset),
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/aylin/yaolab_projects/diffms_yaolab/DiffMS/src/mist/data/datasets.py", line 165, in __init__
+    spectra_list, mol_list = list(zip(*spectra_mol_list))
+    ^^^^^^^^^^^^^^^^^^^^^^
+ValueError: not enough values to unpack (expected 2, got 0)
