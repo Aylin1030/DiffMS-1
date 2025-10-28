@@ -21,6 +21,7 @@ from metrics.abstract_metrics import SumExceptBatchMetric, SumExceptBatchKL, NLL
 from src.metrics.diffms_metrics import K_ACC_Collection, K_SimilarityCollection, Validity
 from src import utils
 from src.mist.models.spectra_encoder import SpectraEncoderGrowing
+from src.inference import scaffold_hooks
 
 
 class Spec2MolDenoisingDiffusion(pl.LightningModule):
@@ -182,6 +183,10 @@ class Spec2MolDenoisingDiffusion(pl.LightningModule):
         self.log_every_steps = cfg.general.log_every_steps
         self.best_val_nll = 1e8
         self.val_counter = 1
+        
+        # Atom and edge type vocabularies for scaffold-constrained generation
+        self.atom_decoder = ['C', 'O', 'P', 'N', 'S', 'Cl', 'F', 'H']
+        self.edge_decoder = ['no_edge', 'single', 'double', 'triple', 'aromatic']
 
     def training_step(self, batch, i):
         output, aux = self.encoder(batch)
@@ -416,10 +421,95 @@ class Spec2MolDenoisingDiffusion(pl.LightningModule):
             true_mols = [None] * len(data)  # 推理模式没有真实分子
         
         # 生成预测分子（训练/验证/推理模式都需要）
+        # 检查是否使用骨架约束
+        use_scaffold = (
+            hasattr(self.cfg.general, 'enforce_scaffold') and 
+            self.cfg.general.enforce_scaffold and
+            self.cfg.general.scaffold_smiles is not None
+        )
+        
+        # 读取每个样本的 formula（如果使用骨架约束）
+        batch_formulas = None
+        if use_scaffold and hasattr(self.cfg.dataset, 'labels_file'):
+            try:
+                import pandas as pd
+                labels_df = pd.read_csv(self.cfg.dataset.labels_file, sep='\t')
+                
+                # 提取当前 batch 的 formulas
+                batch_size = len(data)
+                batch_formulas = []
+                
+                # 方法：使用 batch 索引推导（假设按顺序处理）
+                # 每个 test_step 调用对应一个 batch
+                start_idx = i * batch_size  # i 是 batch 索引
+                
+                for local_idx in range(batch_size):
+                    global_idx = start_idx + local_idx
+                    if global_idx < len(labels_df):
+                        formula = labels_df.iloc[global_idx]['formula']
+                        batch_formulas.append(formula)
+                    else:
+                        batch_formulas.append(None)
+                        logging.warning(f"Sample {local_idx} in batch {i} has no formula, using standard sampling")
+                
+                logging.info(f"Batch {i}: loaded {len([f for f in batch_formulas if f])} formulas")
+                
+            except Exception as e:
+                logging.warning(f"Failed to load formulas from labels file: {e}, using standard sampling")
+                use_scaffold = False
+                batch_formulas = None
+        
         predicted_mols = [list() for _ in range(len(data))]
         for _ in range(self.test_num_samples):
-            for idx, mol in enumerate(self.sample_batch(data)):
+            if use_scaffold and batch_formulas:
+                # 使用骨架约束采样（批量模式）
+                attachment_indices = getattr(self.cfg.general, 'attachment_indices', None)
+                if isinstance(attachment_indices, str):
+                    attachment_indices = [int(x.strip()) for x in attachment_indices.split(',')]
+                
+                batch_mols = self.sample_batch_with_scaffold(
+                    data,
+                    scaffold_smiles=self.cfg.general.scaffold_smiles,
+                    target_formula=batch_formulas,  # 传入列表
+                    attachment_indices=attachment_indices,
+                    enforce_scaffold=True
+                )
+            else:
+                # 使用标准采样
+                batch_mols = self.sample_batch(data)
+            
+            for idx, mol in enumerate(batch_mols):
                 predicted_mols[idx].append(mol)
+        
+        # 重排候选分子（如果启用）
+        if hasattr(self.cfg.general, 'use_rerank') and self.cfg.general.use_rerank:
+            from src.inference.rerank import rerank_by_spectrum, deduplicate_candidates
+            import numpy as np
+            
+            # 对每个样本的候选分子进行重排
+            for idx in range(len(predicted_mols)):
+                # 获取对应的质谱数据
+                # 注意：这里需要根据实际的batch结构来提取质谱峰数据
+                # 假设batch中有spectrum字段
+                if hasattr(batch, 'spectrum') and batch.spectrum is not None:
+                    # 假设spectrum是字典或对象，包含peaks数据
+                    spectrum_data = batch.spectrum
+                    if hasattr(spectrum_data, '__getitem__'):
+                        spec_peaks = spectrum_data[idx]  # 获取该样本的谱峰
+                    else:
+                        spec_peaks = None
+                    
+                    if spec_peaks is not None:
+                        # 去重
+                        unique_mols = deduplicate_candidates(predicted_mols[idx])
+                        # 重排
+                        reranked_mols = rerank_by_spectrum(
+                            unique_mols,
+                            spec_peaks,
+                            top_k_pre=min(64, len(unique_mols)),
+                            use_accurate_rerank=False
+                        )
+                        predicted_mols[idx] = reranked_mols
 
         # 保存预测结果
         with open(f"preds/{self.name}_rank_{self.global_rank}_pred_{i}.pkl", "wb") as f:
@@ -709,6 +799,460 @@ class Spec2MolDenoisingDiffusion(pl.LightningModule):
 
         return mols
 
+    @torch.no_grad()
+    def sample_batch_with_scaffold(
+        self, 
+        data: Batch,
+        scaffold_smiles: str,
+        target_formula: str | list[str],  # 支持单个或批量
+        attachment_indices: list[int] = None,
+        enforce_scaffold: bool = True
+    ) -> Batch:
+        """
+        Scaffold-constrained sampling with formula and attachment point constraints.
+        
+        Args:
+            data: Batch data containing spectrum embeddings
+            scaffold_smiles: SMILES string of the scaffold substructure
+            target_formula: Target molecular formula (e.g., 'C10H12N2O')
+            attachment_indices: List of atom indices in scaffold where new fragments can attach
+            enforce_scaffold: If True, strictly enforce scaffold presence
+        
+        Returns:
+            List of generated molecules
+        """
+        # Parse scaffold
+        scaffold_mol = scaffold_hooks.smiles_to_mol(scaffold_smiles)
+        scaffold_f = scaffold_hooks.formula_of(scaffold_mol)
+        
+        # 支持批量 formula（每个样本一个）
+        if isinstance(target_formula, list):
+            # 批量模式：每个样本分别处理
+            # 正确计算批次大小：使用 num_graphs 或 batch 属性
+            if hasattr(data, 'num_graphs'):
+                batch_size = data.num_graphs
+            elif hasattr(data, 'batch'):
+                batch_size = data.batch.max().item() + 1
+            else:
+                batch_size = 1
+            
+            if len(target_formula) != batch_size:
+                raise ValueError(f"Formula list length ({len(target_formula)}) != batch size ({batch_size})")
+            
+            # 对每个样本分别采样（逐个处理）
+            all_mols = []
+            for idx in range(batch_size):
+                single_data = self._extract_single_from_batch(data, idx)
+                single_formula = target_formula[idx]
+                
+                # 调试：检查提取的数据是否包含 y
+                if not hasattr(single_data, 'y') or single_data.y is None:
+                    logging.error(f"Sample {idx}: Extracted data missing y (spectrum embedding)")
+                    logging.error(f"  single_data type: {type(single_data)}")
+                    logging.error(f"  single_data attributes: {dir(single_data)}")
+                    # 尝试回退到标准采样
+                    single_mols = self.sample_batch(single_data)
+                    all_mols.append(single_mols[0] if single_mols else None)
+                    continue
+                
+                try:
+                    single_mols = self.sample_batch_with_scaffold(
+                        single_data,
+                        scaffold_smiles=scaffold_smiles,
+                        target_formula=single_formula,  # 单个 formula
+                        attachment_indices=attachment_indices,
+                        enforce_scaffold=enforce_scaffold
+                    )
+                    all_mols.append(single_mols[0] if single_mols else None)
+                except Exception as e:
+                    logging.warning(f"Sample {idx} scaffold sampling failed: {e}, using standard sampling")
+                    single_mols = self.sample_batch(single_data)
+                    all_mols.append(single_mols[0] if single_mols else None)
+            
+            return all_mols
+        
+        # 单个 formula 模式（原逻辑）
+        target_f = scaffold_hooks.parse_formula(target_formula)
+        
+        # Calculate remaining formula (ΔF = target - scaffold)
+        try:
+            remaining_f = scaffold_hooks.formula_subtract(target_f, scaffold_f)
+        except ValueError as e:
+            logging.warning(f"Formula constraint violated: {e}. Scaffold requires more atoms than target formula.")
+            # Fallback: use normal sampling
+            return self.sample_batch(data)
+        
+        logging.info(f"Scaffold formula: {scaffold_hooks.formula_to_string(scaffold_f)}")
+        logging.info(f"Target formula: {scaffold_hooks.formula_to_string(target_f)}")
+        logging.info(f"Remaining formula (ΔF): {scaffold_hooks.formula_to_string(remaining_f)}")
+        
+        # 关键检查：确保 data.y 存在
+        if not hasattr(data, 'y') or data.y is None:
+            logging.error("Data missing y (spectrum embedding), cannot proceed with scaffold sampling")
+            logging.error(f"  data type: {type(data)}")
+            logging.error(f"  data attributes: {[attr for attr in dir(data) if not attr.startswith('_')]}")
+            raise ValueError("Spectrum embedding (y) is required for scaffold-constrained sampling")
+        
+        # Initialize dense graph
+        dense_data, node_mask = utils.to_dense(data.x, data.edge_index, data.edge_attr, data.batch)
+        
+        # Start from COMPLETE NOISE (both X and E) to match model's expectation at t=T
+        z_T = diffusion_utils.sample_discrete_feature_noise(limit_dist=self.limit_dist, node_mask=node_mask)
+        X, E, y = z_T.X, z_T.E, data.y  # ← 修复：X也用噪声，而不是dense_data.X
+        
+        # Prepare scaffold metadata (DON'T modify X/E at t=T - keep pure noise)
+        scaffold_size = scaffold_mol.GetNumAtoms()
+        scaffold_indices = list(range(min(scaffold_size, X.shape[1])))
+        
+        logging.info(f"[DEBUG] Scaffold-constrained sampling:")
+        logging.info(f"  Scaffold size: {scaffold_size} atoms, {scaffold_mol.GetNumBonds()} bonds")
+        logging.info(f"  Starting from PURE NOISE at t=T")
+        logging.info(f"  HOOK 3 will enforce scaffold during reverse diffusion")
+        
+        if False and enforce_scaffold and scaffold_size <= X.shape[1]:  # DISABLED initialization
+            # A. Overwrite scaffold atoms in X
+            logging.info(f"[DEBUG] Initializing scaffold atoms and bonds:")
+            for local_idx in range(scaffold_size):
+                if local_idx >= X.shape[1]:
+                    break
+                atom = scaffold_mol.GetAtomWithIdx(local_idx)
+                atom_symbol = atom.GetSymbol()
+                if atom_symbol in self.atom_decoder:
+                    atom_type_idx = self.atom_decoder.index(atom_symbol)
+                    X[:, local_idx, :] = 0
+                    X[:, local_idx, atom_type_idx] = 1
+                    if local_idx < 5:  # 只打印前5个
+                        logging.info(f"  Node {local_idx}: set to {atom_symbol} (idx={atom_type_idx})")
+            
+            # B. Overwrite scaffold bonds in E
+            from rdkit import Chem
+            bond_count = 0
+            for bond in scaffold_mol.GetBonds():
+                i = bond.GetBeginAtomIdx()
+                j = bond.GetEndAtomIdx()
+                
+                # Only set if both atoms are within the graph size
+                if i >= E.shape[1] or j >= E.shape[1]:
+                    continue
+                
+                # Get bond type
+                bond_type = bond.GetBondType()
+                if bond_type == Chem.BondType.SINGLE:
+                    edge_type_idx = 0
+                elif bond_type == Chem.BondType.DOUBLE:
+                    edge_type_idx = 1
+                elif bond_type == Chem.BondType.TRIPLE:
+                    edge_type_idx = 2
+                elif bond_type == Chem.BondType.AROMATIC:
+                    edge_type_idx = 3
+                else:
+                    edge_type_idx = 0  # default to single
+                
+                # Set both directions (symmetric)
+                E[:, i, j, :] = 0
+                E[:, i, j, edge_type_idx] = 1
+                E[:, j, i, :] = 0
+                E[:, j, i, edge_type_idx] = 1
+                bond_count += 1
+                
+                if bond_count <= 5:  # 只打印前5个
+                    bond_type_name = str(bond_type).split('.')[-1]
+                    logging.info(f"  Bond {i}-{j}: {bond_type_name} (idx={edge_type_idx})")
+            
+            logging.info(f"  Total: {scaffold_size} atoms, {bond_count} bonds initialized")
+            
+            # 验证边初始化
+            logging.info(f"[DEBUG] Verifying edge initialization:")
+            edge_verify_count = 0
+            for bond in scaffold_mol.GetBonds():
+                if edge_verify_count >= 3:
+                    break
+                i = bond.GetBeginAtomIdx()
+                j = bond.GetEndAtomIdx()
+                if i >= E.shape[1] or j >= E.shape[1]:
+                    continue
+                
+                edge_types = E[0, i, j, :]
+                predicted_edge = torch.argmax(edge_types).item()
+                
+                bond_type = bond.GetBondType()
+                if bond_type == Chem.BondType.SINGLE:
+                    expected_edge = 0
+                elif bond_type == Chem.BondType.DOUBLE:
+                    expected_edge = 1
+                elif bond_type == Chem.BondType.TRIPLE:
+                    expected_edge = 2
+                elif bond_type == Chem.BondType.AROMATIC:
+                    expected_edge = 3
+                else:
+                    expected_edge = 0
+                
+                match = "✓" if predicted_edge == expected_edge else "✗"
+                logging.info(f"  Edge {i}-{j}: type {predicted_edge} (expected: {expected_edge}) {match}")
+                edge_verify_count += 1
+            
+            # 验证原子初始化
+            logging.info(f"[DEBUG] Verifying atom initialization:")
+            for local_idx in range(min(5, scaffold_size)):
+                atom_types = X[0, local_idx, :]
+                predicted_type = torch.argmax(atom_types).item()
+                predicted_symbol = self.atom_decoder[predicted_type]
+                expected_symbol = scaffold_mol.GetAtomWithIdx(local_idx).GetSymbol()
+                match = "✓" if predicted_symbol == expected_symbol else "✗"
+                logging.info(f"  Node {local_idx}: {predicted_symbol} (expected: {expected_symbol}) {match}")
+        
+        assert (E == torch.transpose(E, 1, 2)).all()
+        
+        # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1
+        for s_int in reversed(range(0, self.T)):
+            s_array = s_int * torch.ones((len(data), 1), dtype=torch.float32, device=self.device)
+            t_array = s_array + 1
+            s_norm = s_array / self.T
+            t_norm = t_array / self.T
+            
+            # Sample z_s with scaffold constraints
+            sampled_s, __ = self.sample_p_zs_given_zt_with_scaffold(
+                s_norm, t_norm, X, E, y, node_mask,
+                scaffold_mol=scaffold_mol,
+                remaining_formula=remaining_f,
+                scaffold_indices=scaffold_indices,
+                attachment_indices=attachment_indices
+            )
+            # 关键修复：更新 X 以使骨架冻结生效
+            X, E, y = sampled_s.X, sampled_s.E, data.y
+            
+            # 每100步检查一次
+            if s_int % 100 == 0:
+                logging.info(f"[DEBUG] Step {s_int}: Checking scaffold preservation...")
+                
+                # 检查原子
+                atom_mismatch = 0
+                for local_idx in range(min(scaffold_size, X.shape[1])):
+                    atom_types = X[0, local_idx, :]
+                    predicted_type = torch.argmax(atom_types).item()
+                    predicted_symbol = self.atom_decoder[predicted_type]
+                    expected_symbol = scaffold_mol.GetAtomWithIdx(local_idx).GetSymbol()
+                    if predicted_symbol != expected_symbol:
+                        atom_mismatch += 1
+                        if atom_mismatch <= 3:  # 只打印前3个不匹配
+                            logging.warning(f"  ✗ Atom {local_idx}: {predicted_symbol} != {expected_symbol}")
+                
+                if atom_mismatch == 0:
+                    logging.info(f"  ✓ All {scaffold_size} atoms match")
+                else:
+                    logging.warning(f"  ✗ {atom_mismatch}/{scaffold_size} atoms mismatch!")
+                
+                # 检查边
+                edge_mismatch = 0
+                edge_total = 0
+                from rdkit import Chem
+                for bond in scaffold_mol.GetBonds():
+                    i = bond.GetBeginAtomIdx()
+                    j = bond.GetEndAtomIdx()
+                    if i >= E.shape[1] or j >= E.shape[1]:
+                        continue
+                    
+                    edge_types = E[0, i, j, :]
+                    predicted_edge = torch.argmax(edge_types).item()
+                    
+                    bond_type = bond.GetBondType()
+                    if bond_type == Chem.BondType.SINGLE:
+                        expected_edge = 0
+                    elif bond_type == Chem.BondType.DOUBLE:
+                        expected_edge = 1
+                    elif bond_type == Chem.BondType.TRIPLE:
+                        expected_edge = 2
+                    elif bond_type == Chem.BondType.AROMATIC:
+                        expected_edge = 3
+                    else:
+                        expected_edge = 0
+                    
+                    edge_total += 1
+                    if predicted_edge != expected_edge:
+                        edge_mismatch += 1
+                        if edge_mismatch <= 3:  # 只打印前3个不匹配
+                            logging.warning(f"  ✗ Edge {i}-{j}: type {predicted_edge} != {expected_edge}")
+                
+                if edge_mismatch == 0:
+                    logging.info(f"  ✓ All {edge_total} edges match")
+                else:
+                    logging.warning(f"  ✗ {edge_mismatch}/{edge_total} edges mismatch!")
+        
+        # Final sampling (X already updated in loop)
+        logging.info(f"[DEBUG] After diffusion loop, final verification:")
+        
+        # 检查原子
+        atom_mismatch = 0
+        for local_idx in range(min(5, scaffold_size)):
+            atom_types = X[0, local_idx, :]
+            predicted_type = torch.argmax(atom_types).item()
+            predicted_symbol = self.atom_decoder[predicted_type]
+            expected_symbol = scaffold_mol.GetAtomWithIdx(local_idx).GetSymbol()
+            match = "✓" if predicted_symbol == expected_symbol else "✗"
+            if predicted_symbol != expected_symbol:
+                atom_mismatch += 1
+            logging.info(f"  Node {local_idx}: {predicted_symbol} (expected: {expected_symbol}) {match}")
+        
+        # 检查边
+        from rdkit import Chem
+        edge_mismatch = 0
+        edge_verify_count = 0
+        for bond in scaffold_mol.GetBonds():
+            if edge_verify_count >= 5:
+                break
+            i = bond.GetBeginAtomIdx()
+            j = bond.GetEndAtomIdx()
+            if i >= E.shape[1] or j >= E.shape[1]:
+                continue
+            
+            edge_types = E[0, i, j, :]
+            predicted_edge = torch.argmax(edge_types).item()
+            
+            bond_type = bond.GetBondType()
+            if bond_type == Chem.BondType.SINGLE:
+                expected_edge = 0
+            elif bond_type == Chem.BondType.DOUBLE:
+                expected_edge = 1
+            elif bond_type == Chem.BondType.TRIPLE:
+                expected_edge = 2
+            elif bond_type == Chem.BondType.AROMATIC:
+                expected_edge = 3
+            else:
+                expected_edge = 0
+            
+            match = "✓" if predicted_edge == expected_edge else "✗"
+            if predicted_edge != expected_edge:
+                edge_mismatch += 1
+            logging.info(f"  Edge {i}-{j}: type {predicted_edge} (expected: {expected_edge}) {match}")
+            edge_verify_count += 1
+        
+        if atom_mismatch > 0 or edge_mismatch > 0:
+            logging.warning(f"[CRITICAL] Scaffold not preserved! Atoms: {atom_mismatch} mismatch, Edges: {edge_mismatch} mismatch")
+        
+        # ===== 关键修复：绕过mask，直接使用我们维护的X和E =====
+        if enforce_scaffold:
+            logging.info(f"[DEBUG] Bypassing mask to preserve scaffold edges")
+            logging.info(f"  X.shape before processing: {X.shape}, E.shape: {E.shape}")
+            
+            # 直接从4D张量转换为用于mol_from_graphs的格式
+            # X: [1, n_nodes, atom_types] -> 需要转换为 [batch, n_nodes]（argmax后）
+            # E: [1, n_nodes, n_nodes, edge_types] -> 需要转换为 [batch, n_nodes, n_nodes]（argmax后）
+            
+            # 对X做argmax得到atom type indices
+            X_indices = torch.argmax(X, dim=-1)  # [1, n_nodes]
+            
+            # 对E做argmax得到edge type indices
+            E_indices = torch.argmax(E, dim=-1)  # [1, n_nodes, n_nodes]
+            
+            # 验证骨架边是否保留
+            edge_check = []
+            for i in range(min(10, E_indices.shape[1])):
+                for j in range(i+1, min(10, E_indices.shape[2])):
+                    edge_type = E_indices[0, i, j].item()
+                    if edge_type < 4:  # 不是NO_EDGE
+                        edge_check.append(f"{i}-{j}:type{edge_type}")
+            logging.info(f"  Edges preserved (first 10): {edge_check}")
+            
+            # 使用处理后的X和E
+            X = X_indices
+            E = E_indices
+            y = data.y
+        else:
+            # 原始路径：使用mask
+            sampled_s.X = X
+            sampled_s = sampled_s.mask(node_mask, collapse=True)
+            X, E, y = sampled_s.X, sampled_s.E, data.y
+        
+        mols = []
+        for mol_idx, (nodes, adj_mat) in enumerate(zip(X, E)):
+            # 调试：打印节点和边信息（只打印第一个分子）
+            if mol_idx == 0 and enforce_scaffold:
+                logging.info(f"[DEBUG] Converting graph #{mol_idx} to molecule:")
+                logging.info(f"  nodes.shape = {nodes.shape}")
+                logging.info(f"  adj_mat.shape = {adj_mat.shape}")
+                
+                # 打印前10个节点的类型
+                node_types = []
+                if len(nodes.shape) == 1:  # 1D: [n]
+                    for i in range(min(10, nodes.shape[0])):
+                        node_type = nodes[i].item()  # 直接取值
+                        node_symbol = self.atom_decoder[node_type]
+                        node_types.append(node_symbol)
+                elif len(nodes.shape) == 2:  # 2D: [n, atom_types]
+                    for i in range(min(10, nodes.shape[0])):
+                        node_type = torch.argmax(nodes[i]).item()
+                        node_symbol = self.atom_decoder[node_type]
+                        node_types.append(node_symbol)
+                logging.info(f"  First 10 node types: {node_types}")
+                
+                # 统计边类型
+                edge_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+                if len(adj_mat.shape) == 2:  # 2D: [n, n]
+                    for i in range(adj_mat.shape[0]):
+                        for j in range(i+1, adj_mat.shape[1]):
+                            edge_type = adj_mat[i, j].item()  # 直接取值，不用argmax
+                            edge_counts[edge_type] += 1
+                elif len(adj_mat.shape) == 3:  # 3D: [n, n, edge_types]
+                    for i in range(adj_mat.shape[0]):
+                        for j in range(i+1, adj_mat.shape[1]):
+                            edge_type = torch.argmax(adj_mat[i, j, :]).item()
+                            edge_counts[edge_type] += 1
+                logging.info(f"  Edge type counts: SINGLE={edge_counts[0]}, DOUBLE={edge_counts[1]}, TRIPLE={edge_counts[2]}, AROMATIC={edge_counts[3]}, NO_EDGE={edge_counts[4]}")
+            
+            mol = self.visualization_tools.mol_from_graphs(nodes, adj_mat)
+            
+            # 调试：在价态校正前检查分子
+            if mol_idx == 0 and enforce_scaffold and mol is not None:
+                from rdkit import Chem
+                try:
+                    logging.info(f"[DEBUG] After mol_from_graphs (before valence correction):")
+                    logging.info(f"  Mol has {mol.GetNumAtoms()} atoms")
+                    mol_smiles = Chem.MolToSmiles(mol)
+                    logging.info(f"  Mol SMILES: {mol_smiles[:100]}...")
+                except Exception as e:
+                    logging.error(f"[DEBUG] Error getting mol info: {e}")
+            
+            # Apply valence correction
+            if mol is not None:
+                from rdkit import Chem
+                from analysis.rdkit_functions import correct_mol
+                try:
+                    editable_mol = Chem.RWMol(mol)
+                    corrected_mol, no_correct = correct_mol(editable_mol)
+                    if corrected_mol is not None:
+                        mol = corrected_mol
+                        
+                        # 调试：价态校正后
+                        if mol_idx == 0 and enforce_scaffold:
+                            logging.info(f"[DEBUG] After valence correction:")
+                            corrected_smiles = Chem.MolToSmiles(mol)
+                            logging.info(f"  Corrected has {mol.GetNumAtoms()} atoms")
+                            logging.info(f"  Corrected SMILES: {corrected_smiles[:100]}...")
+                except Exception as e:
+                    logging.debug(f"Molecule correction failed: {e}")
+            
+            # Validate scaffold presence (if enforce_scaffold)
+            if enforce_scaffold and mol is not None:
+                # 调试：打印生成的分子信息
+                try:
+                    gen_smiles = Chem.MolToSmiles(mol)
+                    scaf_smiles = Chem.MolToSmiles(scaffold_mol)
+                    logging.info(f"[DEBUG] Generated mol: {gen_smiles[:100]}...")
+                    logging.info(f"[DEBUG] Scaffold: {scaf_smiles[:100]}...")
+                    logging.info(f"[DEBUG] Generated has {mol.GetNumAtoms()} atoms, scaffold has {scaffold_mol.GetNumAtoms()} atoms")
+                except Exception as e:
+                    logging.error(f"[DEBUG] Error getting SMILES: {e}")
+                
+                if not scaffold_hooks.contains_scaffold(mol, scaffold_mol):
+                    logging.warning("Generated molecule does not contain scaffold. Discarding.")
+                    mol = None
+                else:
+                    logging.info(f"✅ Generated molecule CONTAINS scaffold!")
+            
+            mols.append(mol)
+        
+        return mols
+
     def sample_p_zs_given_zt(self, s, t, X_t, E_t, y_t, node_mask):
         """Samples from zs ~ p(zs | zt). Only used during sampling.
            if last_step, return the graph prediction as well"""
@@ -768,6 +1312,245 @@ class Spec2MolDenoisingDiffusion(pl.LightningModule):
         out_discrete = utils.PlaceHolder(X=X_s, E=E_s, y=torch.zeros(y_t.shape[0], 0))
 
         return out_one_hot.mask(node_mask).type_as(y_t), out_discrete.mask(node_mask, collapse=True).type_as(y_t)
+
+    def sample_p_zs_given_zt_with_scaffold(
+        self, s, t, X_t, E_t, y_t, node_mask,
+        scaffold_mol=None,
+        remaining_formula=None,
+        scaffold_indices=None,
+        attachment_indices=None
+    ):
+        """
+        Samples from zs ~ p(zs | zt) with scaffold and formula constraints.
+        
+        Args:
+            s, t: Time steps
+            X_t, E_t, y_t: Current graph state
+            node_mask: Node mask
+            scaffold_mol: RDKit molecule for scaffold
+            remaining_formula: Remaining formula (ΔF) after scaffold
+            scaffold_indices: Indices of scaffold atoms in the graph
+            attachment_indices: Allowed attachment points
+        
+        Returns:
+            Sampled next state with constraints applied
+        """
+        bs, n, dxs = X_t.shape
+        beta_t = self.noise_schedule(t_normalized=t)
+        alpha_s_bar = self.noise_schedule.get_alpha_bar(t_normalized=s)
+        alpha_t_bar = self.noise_schedule.get_alpha_bar(t_normalized=t)
+        
+        # Retrieve transition matrices
+        Qtb = self.transition_model.get_Qt_bar(alpha_t_bar, self.device)
+        Qsb = self.transition_model.get_Qt_bar(alpha_s_bar, self.device)
+        Qt = self.transition_model.get_Qt(beta_t, self.device)
+        
+        # Neural net predictions
+        noisy_data = {'X_t': X_t, 'E_t': E_t, 'y_t': y_t, 't': t, 'node_mask': node_mask}
+        extra_data = self.compute_extra_data(noisy_data)
+        pred = self.forward(noisy_data, extra_data, node_mask)
+        
+        # === HOOK 1: Apply formula mask to node logits ===
+        if remaining_formula is not None and scaffold_indices is not None:
+            # Apply formula mask only to non-scaffold nodes
+            pred_X_masked = pred.X.clone()
+            for node_idx in range(n):
+                if node_idx not in scaffold_indices:
+                    # Apply formula constraint
+                    pred_X_masked[:, node_idx, :] = scaffold_hooks.apply_formula_mask_to_logits(
+                        pred.X[:, node_idx:node_idx+1, :],
+                        remaining_formula,
+                        self.atom_decoder
+                    )[:, 0, :]
+            pred.X = pred_X_masked
+        
+        # Normalize predictions (softmax)
+        pred_X = F.softmax(pred.X, dim=-1)  # bs, n, d0
+        pred_E = F.softmax(pred.E, dim=-1)  # bs, n, n, d0
+        
+        # === HOOK 2: Apply attachment mask to edge logits (optional) ===
+        # Note: This is simplified - in practice you might want more sophisticated edge masking
+        # For now, we rely on the scaffold freeze to handle most of the constraint
+        
+        # Compute posterior distributions
+        p_s_and_t_given_0_X = diffusion_utils.compute_batched_over0_posterior_distribution(
+            X_t=X_t, Qt=Qt.X, Qsb=Qsb.X, Qtb=Qtb.X
+        )
+        p_s_and_t_given_0_E = diffusion_utils.compute_batched_over0_posterior_distribution(
+            X_t=E_t, Qt=Qt.E, Qsb=Qsb.E, Qtb=Qtb.E
+        )
+        
+        # Weighted probabilities
+        weighted_X = pred_X.unsqueeze(-1) * p_s_and_t_given_0_X  # bs, n, d0, d_t-1
+        unnormalized_prob_X = weighted_X.sum(dim=2)  # bs, n, d_t-1
+        unnormalized_prob_X[torch.sum(unnormalized_prob_X, dim=-1) == 0] = 1e-5
+        prob_X = unnormalized_prob_X / torch.sum(unnormalized_prob_X, dim=-1, keepdim=True)
+        
+        pred_E = pred_E.reshape((bs, -1, pred_E.shape[-1]))
+        weighted_E = pred_E.unsqueeze(-1) * p_s_and_t_given_0_E
+        unnormalized_prob_E = weighted_E.sum(dim=-2)
+        unnormalized_prob_E[torch.sum(unnormalized_prob_E, dim=-1) == 0] = 1e-5
+        prob_E = unnormalized_prob_E / torch.sum(unnormalized_prob_E, dim=-1, keepdim=True)
+        prob_E = prob_E.reshape(bs, n, n, pred_E.shape[-1])
+        
+        # === HOOK 3: Freeze scaffold atoms and bonds ===
+        if scaffold_mol is not None and scaffold_indices is not None:
+            frozen_atom_count = 0
+            frozen_bond_count = 0
+            
+            # 3A: Freeze atom types (nodes)
+            for local_idx in scaffold_indices:
+                if local_idx >= scaffold_mol.GetNumAtoms() or local_idx >= n:
+                    continue
+                atom = scaffold_mol.GetAtomWithIdx(local_idx)
+                atom_symbol = atom.GetSymbol()
+                if atom_symbol in self.atom_decoder:
+                    atom_type_idx = self.atom_decoder.index(atom_symbol)
+                    # Force scaffold atoms to stay fixed
+                    prob_X[:, local_idx, :] = 0
+                    prob_X[:, local_idx, atom_type_idx] = 1
+                    frozen_atom_count += 1
+            
+            # 3B: CRITICAL - First set all scaffold internal edges to NO_EDGE
+            num_scaffold_atoms = scaffold_mol.GetNumAtoms()
+            NO_EDGE_idx = 4  # NO_EDGE type
+            for i in range(min(num_scaffold_atoms, n)):
+                for j in range(min(num_scaffold_atoms, n)):
+                    if i != j:  # No self-loops
+                        prob_E[:, i, j, :] = 0
+                        prob_E[:, i, j, NO_EDGE_idx] = 1
+            
+            # 3C: Then freeze scaffold bonds with their actual types
+            for bond in scaffold_mol.GetBonds():
+                i = bond.GetBeginAtomIdx()
+                j = bond.GetEndAtomIdx()
+                
+                # Only freeze if both atoms are within the graph size
+                if i >= n or j >= n:
+                    continue
+                
+                # Get bond type
+                bond_type = bond.GetBondType()
+                from rdkit import Chem
+                if bond_type == Chem.BondType.SINGLE:
+                    edge_type_idx = 0
+                elif bond_type == Chem.BondType.DOUBLE:
+                    edge_type_idx = 1
+                elif bond_type == Chem.BondType.TRIPLE:
+                    edge_type_idx = 2
+                elif bond_type == Chem.BondType.AROMATIC:
+                    edge_type_idx = 3
+                else:
+                    edge_type_idx = 0  # default to single
+                
+                # Freeze both directions (since adjacency matrix is symmetric)
+                prob_E[:, i, j, :] = 0
+                prob_E[:, i, j, edge_type_idx] = 1
+                prob_E[:, j, i, :] = 0
+                prob_E[:, j, i, edge_type_idx] = 1
+                frozen_bond_count += 1
+            
+            # 每100步打印一次
+            if hasattr(t, '__getitem__'):
+                t_val = t[0, 0].item()
+            else:
+                t_val = t.item() if hasattr(t, 'item') else float(t)
+            
+            if int(t_val * 500) % 100 == 0:  # 假设 T=500
+                logging.info(f"[HOOK 3] Frozen {frozen_atom_count} atoms, {frozen_bond_count} bonds at t={t_val:.3f}")
+        
+        assert ((prob_X.sum(dim=-1) - 1).abs() < 1e-4).all()
+        assert ((prob_E.sum(dim=-1) - 1).abs() < 1e-4).all()
+        
+        # Sample discrete features
+        sampled_s = diffusion_utils.sample_discrete_features(prob_X, prob_E, node_mask=node_mask)
+        
+        X_s = F.one_hot(sampled_s.X, num_classes=self.Xdim_output).float()
+        E_s = F.one_hot(sampled_s.E, num_classes=self.Edim_output).float()
+        
+        # === POST-SAMPLING HOOK: Force replace scaffold after sampling ===
+        if scaffold_mol is not None and scaffold_indices is not None:
+            # Overwrite scaffold atoms in X_s (after sampling)
+            for local_idx in scaffold_indices:
+                if local_idx >= scaffold_mol.GetNumAtoms() or local_idx >= n:
+                    continue
+                atom = scaffold_mol.GetAtomWithIdx(local_idx)
+                atom_symbol = atom.GetSymbol()
+                if atom_symbol in self.atom_decoder:
+                    atom_type_idx = self.atom_decoder.index(atom_symbol)
+                    X_s[:, local_idx, :] = 0
+                    X_s[:, local_idx, atom_type_idx] = 1
+            
+            # CRITICAL: First set all scaffold internal edges to NO_EDGE (type 4)
+            # This prevents random edges between scaffold atoms
+            num_scaffold_atoms = scaffold_mol.GetNumAtoms()
+            NO_EDGE_idx = 4  # NO_EDGE type
+            for i in range(min(num_scaffold_atoms, n)):
+                for j in range(min(num_scaffold_atoms, n)):
+                    if i != j:  # No self-loops
+                        E_s[:, i, j, :] = 0
+                        E_s[:, i, j, NO_EDGE_idx] = 1
+            
+            # Then overwrite scaffold bonds with their actual types
+            for bond in scaffold_mol.GetBonds():
+                i = bond.GetBeginAtomIdx()
+                j = bond.GetEndAtomIdx()
+                
+                if i >= n or j >= n:
+                    continue
+                
+                bond_type = bond.GetBondType()
+                from rdkit import Chem
+                if bond_type == Chem.BondType.SINGLE:
+                    edge_type_idx = 0
+                elif bond_type == Chem.BondType.DOUBLE:
+                    edge_type_idx = 1
+                elif bond_type == Chem.BondType.TRIPLE:
+                    edge_type_idx = 2
+                elif bond_type == Chem.BondType.AROMATIC:
+                    edge_type_idx = 3
+                else:
+                    edge_type_idx = 0
+                
+                E_s[:, i, j, :] = 0
+                E_s[:, i, j, edge_type_idx] = 1
+                E_s[:, j, i, :] = 0
+                E_s[:, j, i, edge_type_idx] = 1
+        
+        assert (E_s == torch.transpose(E_s, 1, 2)).all()
+        assert (X_t.shape == X_s.shape) and (E_t.shape == E_s.shape)
+        
+        out_one_hot = utils.PlaceHolder(X=X_s, E=E_s, y=torch.zeros(y_t.shape[0], 0))
+        out_discrete = utils.PlaceHolder(X=X_s, E=E_s, y=torch.zeros(y_t.shape[0], 0))
+        
+        # CRITICAL: Bypass mask when scaffold is enforced to preserve our carefully set edges
+        if scaffold_mol is not None and scaffold_indices is not None:
+            # Don't apply mask - return raw tensors to preserve scaffold edges
+            return out_one_hot.type_as(y_t), out_discrete.type_as(y_t)
+        else:
+            # Original path: apply mask
+            return out_one_hot.mask(node_mask).type_as(y_t), out_discrete.mask(node_mask, collapse=True).type_as(y_t)
+
+    def _extract_single_from_batch(self, batch_data, idx: int):
+        """从 batch 中提取单个样本，保留所有字段包括 y（谱嵌入）"""
+        from torch_geometric.data import Batch, Data
+        
+        # 如果是dict形式的batch
+        if isinstance(batch_data, dict) and 'graph' in batch_data:
+            single_graph = batch_data['graph'].get_example(idx)
+            single_batch = Batch.from_data_list([single_graph])
+            # 提取对应的 y（谱嵌入）
+            if hasattr(batch_data['graph'], 'y') and batch_data['graph'].y is not None:
+                single_batch.y = batch_data['graph'].y[idx:idx+1]
+            return {'graph': single_batch}
+        else:
+            # 直接是 Batch 对象
+            single_graph = batch_data.get_example(idx)
+            single_batch = Batch.from_data_list([single_graph])
+            # 关键修复：保留 y（谱嵌入数据）
+            if hasattr(batch_data, 'y') and batch_data.y is not None:
+                single_batch.y = batch_data.y[idx:idx+1].clone()
+            return single_batch
 
     def compute_extra_data(self, noisy_data):
         """ At every training step (after adding noise) and step in sampling, compute extra information and append to

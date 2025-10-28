@@ -25,3 +25,10 @@ log_every_steps: 50
 
 evaluate_all_checkpoints: False
 checkpoint_strategy: 'last'
+
+# Scaffold-constrained generation (optional)
+scaffold_smiles: null           # SMILES string of scaffold substructure, e.g., "c1ccccc1"
+target_formula: null            # Target molecular formula, e.g., "C10H12N2O"
+attachment_indices: null        # Comma-separated attachment point indices, e.g., "2,5"
+enforce_scaffold: False         # If True, enforce scaffold presence in generated molecules
+use_rerank: False               # If True, rerank candidates by spectrum similarity

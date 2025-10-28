@@ -161,6 +161,26 @@ def load_weights(model, path):
     
     return model
 
+def parse_scaffold_args(cfg: DictConfig) -> dict:
+    """Parse scaffold-related command line arguments from config."""
+    scaffold_config = {
+        'scaffold_smiles': getattr(cfg.general, 'scaffold_smiles', None),
+        'target_formula': getattr(cfg.general, 'target_formula', None),
+        'attachment_indices': getattr(cfg.general, 'attachment_indices', None),
+        'enforce_scaffold': getattr(cfg.general, 'enforce_scaffold', False),
+        'use_rerank': getattr(cfg.general, 'use_rerank', False),
+    }
+    
+    # Parse attachment indices if provided as string
+    if scaffold_config['attachment_indices'] is not None:
+        if isinstance(scaffold_config['attachment_indices'], str):
+            scaffold_config['attachment_indices'] = [
+                int(x.strip()) for x in scaffold_config['attachment_indices'].split(',')
+            ]
+    
+    return scaffold_config
+
+
 @hydra.main(version_base='1.3', config_path='../configs', config_name='config')
 def main(cfg: DictConfig):
     from rdkit import RDLogger
